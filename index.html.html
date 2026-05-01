@@ -1,0 +1,2002 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+<title>Mississippi Sonification Corridor — Quad Cities</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;0,600;1,300;1,400&family=Share+Tech+Mono&display=swap" rel="stylesheet"/>
+
+<!-- ── DEPENDENCIES ─────────────────────────────────────────────────────── -->
+<!-- Tone.js for sonification -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.8.49/Tone.js"></script>
+
+<style>
+/* ══════════════════════════════════════════════════════════════
+   DESIGN SYSTEM — Cyberpunk-Botanical Dark Mode
+   ══════════════════════════════════════════════════════════════ */
+:root {
+  /* Core palette */
+  --bg:           #020608;
+  --bg-panel:     #040d10;
+  --bg-glass:     rgba(4, 18, 22, 0.82);
+  --river-cyan:   #00d4e8;
+  --river-deep:   #006880;
+  --wetland-jade: #2adf8a;
+  --wetland-dim:  #0d6640;
+  --aerial-gold:  #f0c040;
+  --aerial-dim:   #8a6c10;
+  --line-dim:     rgba(0, 212, 232, 0.12);
+  --line-mid:     rgba(0, 212, 232, 0.28);
+  --text-primary: #e8f4f8;
+  --text-muted:   rgba(200, 230, 238, 0.42);
+  --text-data:    #00d4e8;
+  --danger:       #ff4a60;
+  --border:       rgba(0, 212, 232, 0.14);
+  --border-bright:rgba(0, 212, 232, 0.35);
+
+  /* Typography */
+  --font-serif:   'Cormorant Garamond', Georgia, serif;
+  --font-mono:    'Share Tech Mono', monospace;
+}
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+html, body {
+  width: 100vw; height: 100vh;
+  overflow: hidden;
+  background: var(--bg);
+  color: var(--text-primary);
+  font-family: var(--font-serif);
+  cursor: crosshair;
+  touch-action: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* ── SCAN-LINE OVERLAY ──────────────────────────────────────── */
+body::after {
+  content: '';
+  position: fixed; inset: 0; z-index: 9999;
+  background: repeating-linear-gradient(
+    0deg,
+    transparent,
+    transparent 2px,
+    rgba(0,0,0,.055) 2px,
+    rgba(0,0,0,.055) 4px
+  );
+  pointer-events: none;
+}
+
+/* ── LAYOUT ─────────────────────────────────────────────────── */
+#app {
+  display: grid;
+  grid-template-columns: 320px 1fr;
+  grid-template-rows: 100vh;
+  height: 100vh;
+}
+
+/* ── SIDEBAR ─────────────────────────────────────────────────── */
+#sidebar {
+  grid-column: 1;
+  background: var(--bg-glass);
+  border-right: 0.5px solid var(--border);
+  backdrop-filter: blur(12px);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  position: relative;
+  z-index: 10;
+}
+
+/* Sidebar top glow strip */
+#sidebar::before {
+  content: '';
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, var(--river-cyan), transparent);
+  opacity: .5;
+}
+
+/* ── HEADER ──────────────────────────────────────────────────── */
+#header {
+  padding: 28px 24px 20px;
+  border-bottom: 0.5px solid var(--border);
+}
+
+#project-label {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: .28em;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  margin-bottom: 8px;
+}
+
+#project-title {
+  font-size: 22px;
+  font-weight: 300;
+  letter-spacing: .04em;
+  line-height: 1.2;
+  color: var(--text-primary);
+}
+
+#project-title em {
+  font-style: italic;
+  color: var(--river-cyan);
+}
+
+#project-sub {
+  margin-top: 6px;
+  font-size: 12px;
+  font-style: italic;
+  color: var(--text-muted);
+  letter-spacing: .02em;
+}
+
+/* ── LIVE DATA NODES ─────────────────────────────────────────── */
+#data-nodes {
+  padding: 20px 24px;
+  border-bottom: 0.5px solid var(--border);
+  flex-shrink: 0;
+}
+
+.node {
+  margin-bottom: 18px;
+  position: relative;
+}
+.node:last-child { margin-bottom: 0; }
+
+.node-header {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 5px;
+}
+
+.node-dot {
+  width: 6px; height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  animation: dotPulse 2.4s ease-in-out infinite;
+}
+.node-dot.river  { background: var(--river-cyan);   box-shadow: 0 0 8px var(--river-cyan); }
+.node-dot.wetland{ background: var(--wetland-jade); box-shadow: 0 0 8px var(--wetland-jade); }
+.node-dot.aerial { background: var(--aerial-gold);  box-shadow: 0 0 8px var(--aerial-gold); }
+.node-dot.err    { background: var(--danger);       box-shadow: 0 0 8px var(--danger); animation: none; }
+
+@keyframes dotPulse {
+  0%,100% { opacity: .45; transform: scale(1); }
+  50%     { opacity: 1;   transform: scale(1.35); }
+}
+
+.node-name {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: .18em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.node-value {
+  font-family: var(--font-serif);
+  font-size: 36px;
+  font-weight: 300;
+  line-height: 1;
+  letter-spacing: -.01em;
+  transition: color .6s ease, opacity .3s;
+}
+.node-value.river   { color: var(--river-cyan); }
+.node-value.wetland { color: var(--wetland-jade); }
+.node-value.aerial  { color: var(--aerial-gold); }
+.node-value.loading { color: var(--text-muted); font-style: italic; font-size: 18px; padding-top: 8px; }
+
+.node-unit {
+  font-size: 13px;
+  font-style: italic;
+  color: var(--text-muted);
+  margin-left: 4px;
+}
+
+.node-sub {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  color: var(--text-muted);
+  letter-spacing: .1em;
+  margin-top: 3px;
+}
+
+/* mini sparkline */
+.sparkline {
+  width: 100%;
+  height: 28px;
+  margin-top: 6px;
+}
+
+/* ── STATUS BAR ──────────────────────────────────────────────── */
+#status-bar {
+  padding: 10px 24px;
+  border-bottom: 0.5px solid var(--border);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+}
+
+#status-dot {
+  width: 5px; height: 5px;
+  border-radius: 50%;
+  background: var(--text-muted);
+  transition: background .4s, box-shadow .4s;
+}
+#status-dot.live   { background: var(--wetland-jade); box-shadow: 0 0 6px var(--wetland-jade); }
+#status-dot.error  { background: var(--danger);       box-shadow: 0 0 6px var(--danger); }
+#status-dot.fetch  { background: var(--aerial-gold);  box-shadow: 0 0 6px var(--aerial-gold); animation: dotPulse 1s linear infinite; }
+
+#status-text {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: .15em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+#last-fetch {
+  margin-left: auto;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  color: rgba(200,230,238,.22);
+  letter-spacing: .06em;
+}
+
+/* ── CONTROLS ────────────────────────────────────────────────── */
+#controls {
+  padding: 18px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  flex-shrink: 0;
+}
+
+.ctrl-group-label {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: .22em;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  margin-bottom: 2px;
+}
+
+.ctrl-row {
+  display: flex;
+  gap: 8px;
+}
+
+.btn {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: .14em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  background: none;
+  border: 0.5px solid var(--border);
+  border-radius: 2px;
+  padding: 10px 16px;
+  cursor: pointer;
+  flex: 1;
+  transition: all .2s;
+  white-space: nowrap;
+  min-height: 44px; /* touch target */
+}
+.btn:hover {
+  border-color: var(--border-bright);
+  color: var(--text-primary);
+  background: rgba(0,212,232,.06);
+}
+.btn.active {
+  border-color: var(--river-cyan);
+  color: var(--river-cyan);
+  background: rgba(0,212,232,.1);
+  box-shadow: 0 0 12px rgba(0,212,232,.12);
+}
+.btn.active.wetland {
+  border-color: var(--wetland-jade);
+  color: var(--wetland-jade);
+  background: rgba(42,223,138,.08);
+  box-shadow: 0 0 12px rgba(42,223,138,.1);
+}
+.btn.active.aerial {
+  border-color: var(--aerial-gold);
+  color: var(--aerial-gold);
+  background: rgba(240,192,64,.07);
+}
+
+/* ── MODE SELECTOR ───────────────────────────────────────────── */
+#mode-selector {
+  padding: 0 24px 18px;
+  flex-shrink: 0;
+}
+
+.mode-btn {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 13px 16px;
+  margin-bottom: 6px;
+  background: none;
+  border: 0.5px solid var(--border);
+  border-radius: 2px;
+  cursor: pointer;
+  text-align: left;
+  transition: all .2s;
+  min-height: 52px; /* large touch target */
+  color: var(--text-muted);
+  font-family: var(--font-serif);
+}
+.mode-btn:hover {
+  border-color: var(--border-bright);
+  background: rgba(0,212,232,.04);
+  color: var(--text-primary);
+}
+.mode-btn.active {
+  border-color: var(--river-cyan);
+  background: rgba(0,212,232,.08);
+}
+.mode-btn.active.wetland-mode {
+  border-color: var(--wetland-jade);
+  background: rgba(42,223,138,.06);
+}
+.mode-btn.active.aerial-mode {
+  border-color: var(--aerial-gold);
+  background: rgba(240,192,64,.06);
+}
+
+.mode-icon {
+  font-size: 18px;
+  flex-shrink: 0;
+  width: 24px;
+  text-align: center;
+}
+
+.mode-info { flex: 1; }
+
+.mode-name {
+  font-size: 14px;
+  font-weight: 400;
+  letter-spacing: .02em;
+  color: var(--text-primary);
+  line-height: 1;
+}
+
+.mode-desc {
+  font-size: 11px;
+  font-style: italic;
+  color: var(--text-muted);
+  margin-top: 2px;
+}
+
+/* ── FOOTER ──────────────────────────────────────────────────── */
+#sidebar-footer {
+  margin-top: auto;
+  padding: 14px 24px;
+  border-top: 0.5px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+#site-id {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: .14em;
+  color: rgba(200,230,238,.2);
+}
+
+/* ── CANVAS AREA ─────────────────────────────────────────────── */
+#canvas-container {
+  grid-column: 2;
+  position: relative;
+  overflow: hidden;
+}
+
+#main-canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+/* ── CANVAS OVERLAYS ─────────────────────────────────────────── */
+#intro-overlay {
+  position: absolute; inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+  z-index: 20;
+  transition: opacity 1.8s ease;
+}
+
+#intro-overlay.hidden { opacity: 0; }
+
+#intro-title {
+  font-size: clamp(28px, 4.5vw, 56px);
+  font-weight: 300;
+  letter-spacing: .1em;
+  color: var(--river-cyan);
+  text-shadow: 0 0 60px rgba(0,212,232,.4);
+  text-align: center;
+  line-height: 1.1;
+}
+
+#intro-title em {
+  font-style: italic;
+  color: var(--text-primary);
+  opacity: .7;
+}
+
+#intro-prompt {
+  margin-top: 32px;
+  font-size: 15px;
+  font-style: italic;
+  color: rgba(200,230,238,.5);
+  letter-spacing: .12em;
+  animation: promptPulse 2.8s ease-in-out infinite;
+}
+
+@keyframes promptPulse {
+  0%,100% { opacity: .3; }
+  50%     { opacity: .85; }
+}
+
+#coord-overlay {
+  position: absolute;
+  bottom: 20px; right: 20px;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: .1em;
+  color: rgba(0,212,232,.22);
+  pointer-events: none;
+  z-index: 5;
+  line-height: 1.8;
+  text-align: right;
+}
+
+/* ── ERROR TOAST ─────────────────────────────────────────────── */
+#error-toast {
+  position: absolute;
+  top: 20px; left: 50%; transform: translateX(-50%);
+  background: rgba(255,74,96,.12);
+  border: 0.5px solid rgba(255,74,96,.4);
+  color: #ff7a8a;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: .1em;
+  padding: 10px 20px;
+  border-radius: 2px;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity .4s;
+  z-index: 50;
+  text-align: center;
+  max-width: 460px;
+  line-height: 1.6;
+}
+#error-toast.show { opacity: 1; }
+
+/* Responsive: stack on narrow screens */
+@media (max-width: 680px) {
+  #app { grid-template-columns: 1fr; grid-template-rows: auto 1fr; }
+  #sidebar { border-right: none; border-bottom: 0.5px solid var(--border); max-height: 50vh; overflow-y: auto; }
+  #canvas-container { grid-column: 1; }
+}
+</style>
+</head>
+<body>
+
+<div id="app">
+
+  <!-- ══════════════════════════════════════════════════════════
+       SIDEBAR — Kiosk data panel
+  ═══════════════════════════════════════════════════════════════ -->
+  <aside id="sidebar">
+
+    <div id="header">
+      <div id="project-label">Quad Cities · Live Data</div>
+      <h1 id="project-title">Mississippi<br><em>Sonification</em><br>Corridor</h1>
+      <p id="project-sub">Lock &amp; Dam 15 · Rock Island, IL</p>
+    </div>
+
+    <!-- Live data nodes -->
+    <div id="data-nodes">
+
+      <!-- Node A: River Pulse -->
+      <div class="node" id="node-river">
+        <div class="node-header">
+          <span class="node-dot river" id="dot-river"></span>
+          <span class="node-name">River Stage</span>
+        </div>
+        <div>
+          <span class="node-value river loading" id="val-stage">—</span>
+          <span class="node-unit" id="unit-stage" style="display:none">ft</span>
+        </div>
+        <div class="node-sub" id="sub-stage">Fetching USGS 05451500…</div>
+        <svg class="sparkline" id="spark-stage" viewBox="0 0 240 28" preserveAspectRatio="none"></svg>
+      </div>
+
+      <!-- Node A2: Discharge -->
+      <div class="node" id="node-discharge">
+        <div class="node-header">
+          <span class="node-dot river" style="animation-delay:.4s"></span>
+          <span class="node-name">Discharge</span>
+        </div>
+        <div>
+          <span class="node-value river loading" id="val-discharge">—</span>
+          <span class="node-unit" id="unit-discharge" style="display:none">cfs</span>
+        </div>
+        <div class="node-sub" id="sub-discharge">Parameter 00060</div>
+        <svg class="sparkline" id="spark-discharge" viewBox="0 0 240 28" preserveAspectRatio="none"></svg>
+      </div>
+
+      <!-- Node B: Wetland -->
+      <div class="node" id="node-wetland">
+        <div class="node-header">
+          <span class="node-dot wetland" style="animation-delay:.8s"></span>
+          <span class="node-name">Water Temp · Nahant</span>
+        </div>
+        <div>
+          <span class="node-value wetland loading" id="val-temp">—</span>
+          <span class="node-unit" id="unit-temp" style="display:none">°C</span>
+        </div>
+        <div class="node-sub" id="sub-temp">Parameter 00010</div>
+      </div>
+
+      <!-- Node C: Aerial -->
+      <div class="node" id="node-aerial">
+        <div class="node-header">
+          <span class="node-dot aerial" style="animation-delay:1.2s"></span>
+          <span class="node-name">Eagle Sightings · eBird</span>
+        </div>
+        <div>
+          <span class="node-value aerial loading" id="val-eagles">—</span>
+        </div>
+        <div class="node-sub" id="sub-eagles">eBird API · Illiniwek</div>
+      </div>
+
+    </div><!-- /data-nodes -->
+
+    <!-- Status bar -->
+    <div id="status-bar">
+      <div id="status-dot"></div>
+      <span id="status-text">Initializing…</span>
+      <span id="last-fetch"></span>
+    </div>
+
+    <!-- Mode selector -->
+    <div id="mode-selector">
+      <div class="ctrl-group-label" style="margin-bottom:8px">Active Mode</div>
+
+      <button class="mode-btn active" data-mode="river" onclick="setMode('river')">
+        <span class="mode-icon">〰</span>
+        <div class="mode-info">
+          <div class="mode-name">River Pulse</div>
+          <div class="mode-desc">Stage → root note · Discharge → tempo</div>
+        </div>
+      </button>
+
+      <button class="mode-btn wetland-mode" data-mode="wetland" onclick="setMode('wetland')">
+        <span class="mode-icon">❧</span>
+        <div class="mode-info">
+          <div class="mode-name">Wetland Filter</div>
+          <div class="mode-desc">Temperature → filter resonance</div>
+        </div>
+      </button>
+
+      <button class="mode-btn aerial-mode" data-mode="aerial" onclick="setMode('aerial')">
+        <span class="mode-icon">◦</span>
+        <div class="mode-info">
+          <div class="mode-name">Aerial Presence</div>
+          <div class="mode-desc">Eagle events → shimmer leads</div>
+        </div>
+      </button>
+    </div>
+
+    <!-- Sound/Refresh controls -->
+    <div id="controls">
+      <div class="ctrl-group-label">Engine</div>
+      <div class="ctrl-row">
+        <button class="btn" id="btn-sound" onclick="toggleSound()">♪ Sound Off</button>
+        <button class="btn" id="btn-refresh" onclick="fetchAllData()">↺ Refresh</button>
+      </div>
+    </div>
+
+    <div id="sidebar-footer">
+      <div id="site-id">USGS · Site 05451500 · 05N 5E 26 DCCC</div>
+      <div id="site-id" style="opacity:.55">Lat 41.5131° · Lon -90.5776°</div>
+    </div>
+
+  </aside>
+
+  <!-- ══════════════════════════════════════════════════════════
+       CANVAS — Generative visualization
+  ═══════════════════════════════════════════════════════════════ -->
+  <div id="canvas-container">
+    <canvas id="main-canvas"></canvas>
+
+    <div id="intro-overlay">
+      <div id="intro-title">Mississippi<br><em>Corridor</em></div>
+      <div id="intro-prompt">touch to activate sound · data streams live</div>
+    </div>
+
+    <div id="coord-overlay" id="coords">
+      41.5131° N · 90.5776° W<br>
+      Lock &amp; Dam 15
+    </div>
+
+    <div id="error-toast"></div>
+  </div>
+
+</div><!-- /app -->
+
+
+<!-- ══════════════════════════════════════════════════════════════════
+     JAVASCRIPT — Modular Architecture
+     
+     MODULE MAP (mirrors TouchDesigner CHOP structure):
+       USGSFetcher    → Data IN node
+       DataMapper     → Math CHOP (normalize, scale)
+       SoundEngine    → Audio CHOP (Tone.js → TD Audio Out)
+       Renderer       → Canvas SOP
+       AppController  → Master COMP
+═════════════════════════════════════════════════════════════════════ -->
+<script>
+'use strict';
+
+// ═══════════════════════════════════════════════════════════════════
+// CONFIG  — single source of truth, mirrors TD parameter table
+// ═══════════════════════════════════════════════════════════════════
+const CONFIG = {
+  // USGS
+  USGS_SITE:       '05451500',        // Lock and Dam 15, Rock Island IL
+  USGS_PARAMS:     '00065,00060,00010', // Stage(ft), Discharge(cfs), Temp(°C)
+  USGS_PERIOD:     'PT3H',            // last 3 hours for sparklines
+  USGS_BASE_URL:   'https://waterservices.usgs.gov/nwis/iv/',
+  FETCH_INTERVAL:  5 * 60 * 1000,    // refresh every 5 minutes
+
+  // eBird (replace TOKEN with your key)
+  EBIRD_TOKEN:     'YOUR_EBIRD_API_TOKEN',
+  EBIRD_REGION:    'US-IL-161',       // Rock Island County
+  EBIRD_SPECIES:   'baleag',          // Bald Eagle species code
+  EBIRD_DAYS_BACK: 3,
+
+  // Data ranges (for normalization — update from historical records)
+  STAGE_MIN:  5.0,   STAGE_MAX:  28.0,   // ft
+  DISCHARGE_MIN: 20000, DISCHARGE_MAX: 150000, // cfs
+  TEMP_MIN:   0.0,   TEMP_MAX:   25.0,   // °C
+
+  // Music
+  PENTATONIC_C3: [130.81, 146.83, 164.81, 196.00, 220.00,  // C3 D3 E3 G3 A3
+                  261.63, 293.66, 329.63, 392.00, 440.00,  // C4 D4 E4 G4 A4
+                  523.25, 587.33, 659.25, 783.99, 880.00], // C5...
+
+  TEMPO_MIN:    40,   // BPM — low stage
+  TEMPO_MAX:   140,   // BPM — flood stage
+  DRONE_BASE:   55,   // Hz — fundamental drone (A1)
+};
+
+// ═══════════════════════════════════════════════════════════════════
+// MODULE 1: USGSFetcher
+// TouchDesigner equivalent: DAT + Python fetch script → CHOP In
+// ═══════════════════════════════════════════════════════════════════
+const USGSFetcher = (() => {
+  /**
+   * Fetch the most recent instantaneous values from USGS WaterServices.
+   *
+   * Endpoint:  /nwis/iv/
+   * Format:    JSON (USGS WaterML 2.0-like)
+   * Returns:   { stage, discharge, temperature, history: { stage[], discharge[] } }
+   *
+   * TD Note: In TouchDesigner, replace this function with a Web CHOP
+   *          pointed at the same URL. The JSON path to the value is:
+   *          value.timeSeries[n].values[0].value[0].value
+   */
+  async function fetchInstantaneous() {
+    const url = new URL(CONFIG.USGS_BASE_URL);
+    url.searchParams.set('sites',       CONFIG.USGS_SITE);
+    url.searchParams.set('parameterCd', CONFIG.USGS_PARAMS);
+    url.searchParams.set('period',      CONFIG.USGS_PERIOD);  // 3h for history
+    url.searchParams.set('format',      'json');
+    url.searchParams.set('siteStatus',  'active');
+
+    // Signal fetch in progress
+    setStatus('fetch', 'Fetching USGS data…');
+
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 12000); // 12s timeout
+
+    try {
+      const response = await fetch(url.toString(), {
+        signal: controller.signal,
+        headers: { 'Accept': 'application/json' }
+      });
+      clearTimeout(timeout);
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status} — ${response.statusText}`);
+      }
+
+      const json = await response.json();
+      return parseUSGSResponse(json);
+
+    } catch (err) {
+      clearTimeout(timeout);
+      if (err.name === 'AbortError') {
+        throw new Error('USGS API timeout (12s)');
+      }
+      throw err;
+    }
+  }
+
+  /**
+   * Parse USGS instantaneous-values JSON response.
+   *
+   * Structure:
+   *   json.value.timeSeries[]
+   *     .variable.variableCode[0].value  → parameter code ('00065' etc)
+   *     .values[0].value[]               → array of { value, dateTime, qualifiers }
+   *     .values[0].value[last]           → most recent reading
+   *
+   * TD Note: These path strings map directly to JSON DAT Select rows in TD.
+   */
+  function parseUSGSResponse(json) {
+    const series = json?.value?.timeSeries;
+    if (!series || !series.length) {
+      throw new Error('USGS response contained no time series data');
+    }
+
+    const result = {
+      stage:       null,
+      discharge:   null,
+      temperature: null,
+      history: { stage: [], discharge: [] },
+      timestamp:   null,
+      siteId:      CONFIG.USGS_SITE,
+    };
+
+    for (const ts of series) {
+      const paramCode = ts?.variable?.variableCode?.[0]?.value;
+      const values    = ts?.values?.[0]?.value;
+      if (!values || !values.length) continue;
+
+      // Most recent value is the last item in the array
+      const latest = values[values.length - 1];
+      const parsed = parseFloat(latest?.value);
+      if (isNaN(parsed)) continue;
+
+      // "Ice affected" / "Eqp" qualifiers → flag as suspect but still use
+      const qualifiers = latest?.qualifiers || [];
+      const isSuspect  = qualifiers.some(q => ['Ice', 'Eqp', 'Dis'].includes(q));
+
+      switch (paramCode) {
+        case '00065': // Gage height (stage), ft
+          result.stage     = parsed;
+          result.timestamp = latest.dateTime;
+          result.stageSuspect = isSuspect;
+          // Build sparkline history (last ~36 readings = 3 hours at 5-min intervals)
+          result.history.stage = values
+            .slice(-36)
+            .map(v => parseFloat(v.value))
+            .filter(v => !isNaN(v));
+          break;
+
+        case '00060': // Discharge, cfs
+          result.discharge = parsed;
+          result.dischargeSuspect = isSuspect;
+          result.history.discharge = values
+            .slice(-36)
+            .map(v => parseFloat(v.value))
+            .filter(v => !isNaN(v));
+          break;
+
+        case '00010': // Water temperature, °C
+          result.temperature = parsed;
+          break;
+      }
+    }
+
+    return result;
+  }
+
+  // Public API
+  return { fetchInstantaneous };
+})();
+
+
+// ═══════════════════════════════════════════════════════════════════
+// MODULE 2: eBirdFetcher  (Aerial Presence)
+// TD equivalent: Web CHOP → Python DAT parser
+// ═══════════════════════════════════════════════════════════════════
+const eBirdFetcher = (() => {
+  /**
+   * Fetch recent Bald Eagle sightings from eBird API.
+   * Returns: { count, sightings: [{ obsDt, locName, howMany, lat, lng }] }
+   *
+   * NOTE: Requires a free eBird API key from https://ebird.org/api/keygen
+   * Replace CONFIG.EBIRD_TOKEN with your key.
+   *
+   * TD Note: In TouchDesigner, use a Web CHOP with header:
+   *          X-eBirdApiToken: YOUR_TOKEN
+   */
+  async function fetchEagleSightings() {
+    if (CONFIG.EBIRD_TOKEN === 'YOUR_EBIRD_API_TOKEN') {
+      // Return mock data when no token is configured
+      return { count: 0, sightings: [], mock: true };
+    }
+
+    const url = `https://api.ebird.org/v2/data/obs/${CONFIG.EBIRD_REGION}/recent/${CONFIG.EBIRD_SPECIES}`
+              + `?back=${CONFIG.EBIRD_DAYS_BACK}&detail=simple&hotspot=false`;
+
+    try {
+      const response = await fetch(url, {
+        headers: { 'X-eBirdApiToken': CONFIG.EBIRD_TOKEN }
+      });
+      if (!response.ok) throw new Error(`eBird HTTP ${response.status}`);
+      const data = await response.json();
+
+      return {
+        count:     data.length,
+        sightings: data.map(s => ({
+          obsDt:   s.obsDt,
+          locName: s.locName,
+          howMany: s.howMany || 1,
+          lat:     s.lat,
+          lng:     s.lng,
+        })),
+      };
+    } catch (err) {
+      console.warn('[eBird] Fetch failed:', err.message);
+      return { count: 0, sightings: [], error: err.message };
+    }
+  }
+
+  return { fetchEagleSightings };
+})();
+
+
+// ═══════════════════════════════════════════════════════════════════
+// MODULE 3: DataMapper
+// Pure math functions — mirrors TouchDesigner Math CHOP
+// All functions: (rawValue) → normalised 0..1 OR mapped output value
+// ═══════════════════════════════════════════════════════════════════
+const DataMapper = (() => {
+
+  /** Clamp-normalize rawValue from [inMin..inMax] to [0..1] */
+  function normalize(value, inMin, inMax) {
+    if (inMax === inMin) return 0;
+    return Math.max(0, Math.min(1, (value - inMin) / (inMax - inMin)));
+  }
+
+  /** Linear remap [inMin..inMax] → [outMin..outMax] */
+  function remap(value, inMin, inMax, outMin, outMax) {
+    const t = normalize(value, inMin, inMax);
+    return outMin + t * (outMax - outMin);
+  }
+
+  /**
+   * Map stage (ft) → pentatonic root frequency (Hz).
+   * Lower stage = lower note, higher stage = higher note.
+   * TD Note: CHOP Select on PENTATONIC_C3 array using a Lookup CHOP.
+   */
+  function stageToFrequency(stageFt) {
+    const t     = normalize(stageFt, CONFIG.STAGE_MIN, CONFIG.STAGE_MAX);
+    const index = Math.round(t * (CONFIG.PENTATONIC_C3.length - 1));
+    return CONFIG.PENTATONIC_C3[Math.max(0, Math.min(index, CONFIG.PENTATONIC_C3.length - 1))];
+  }
+
+  /**
+   * Map discharge (cfs) → tempo (BPM).
+   * Higher flow = faster pulse.
+   */
+  function dischargeToBPM(dischargeCFS) {
+    return remap(dischargeCFS, CONFIG.DISCHARGE_MIN, CONFIG.DISCHARGE_MAX,
+                 CONFIG.TEMPO_MIN, CONFIG.TEMPO_MAX);
+  }
+
+  /**
+   * Map temperature (°C) → filter cutoff frequency (Hz).
+   * Cold clear water = high-pass (bright, clean).
+   * Warm murky water = low-pass (dark, muddy).
+   * Returns { type: 'highpass'|'lowpass', frequency: Hz, Q: resonance }
+   */
+  function tempToFilter(tempC) {
+    const t = normalize(tempC, CONFIG.TEMP_MIN, CONFIG.TEMP_MAX);
+    if (t < 0.5) {
+      // Cold → high-pass, frequency rises as it cools
+      return {
+        type:      'highpass',
+        frequency: remap(t, 0, 0.5, 4000, 800),
+        Q:         remap(t, 0, 0.5, 0.5, 3.0),
+      };
+    } else {
+      // Warm → low-pass, frequency falls as it warms
+      return {
+        type:      'lowpass',
+        frequency: remap(t, 0.5, 1.0, 2000, 200),
+        Q:         remap(t, 0.5, 1.0, 1.0, 6.0),
+      };
+    }
+  }
+
+  /**
+   * Map stage (ft) → canvas glow intensity (0..1) for bioluminescent current.
+   */
+  function stageToGlow(stageFt) {
+    return normalize(stageFt, CONFIG.STAGE_MIN, CONFIG.STAGE_MAX);
+  }
+
+  /**
+   * Map discharge → particle speed multiplier for current visualization.
+   */
+  function dischargeToSpeed(dischargeCFS) {
+    return remap(dischargeCFS, CONFIG.DISCHARGE_MIN, CONFIG.DISCHARGE_MAX, 0.4, 3.2);
+  }
+
+  // Public API — each function is individually importable into TD as a Script CHOP
+  return { normalize, remap, stageToFrequency, dischargeToBPM, tempToFilter,
+           stageToGlow, dischargeToSpeed };
+})();
+
+
+// ═══════════════════════════════════════════════════════════════════
+// MODULE 4: SoundEngine  — Deep Drone Edition
+//
+// ARCHITECTURE (mirrors TD Audio CHOP chain):
+//
+//   DroneBank (10 partials) ─┐
+//   BreathLFO ───────────────┤→ DroneGain → Chorus → Reverb ─┐
+//   TouchBend (pitch shift) ─┘                                │
+//                                                              │
+//   PulseSynth (discharge BPM) ──────────────────────────────→┤→ Master
+//   BloomSynth (touch events) ───────────────────────────────→┤
+//   WetlandNoise → Filter ───────────────────────────────────→┤
+//   ShimmerSynth (eagle events) ─────────────────────────────→┘
+//
+// DATA → SOUND MAPPINGS:
+//   River Stage (ft)    → # of active harmonic partials (2 at low → 10 at flood)
+//   Discharge (cfs)     → Breath LFO rate (slow at low flow, fast at flood)
+//   Touch X position    → ±1 semitone pitch bend on drone fundamental
+//   Touch Y position    → Harmonic brightness (high = more overtones audible)
+//   Touch DOWN event    → Bloom: pentatonic arpeggio rippling upward
+//
+// TD CHOP EQUIVALENTS noted inline throughout.
+// ═══════════════════════════════════════════════════════════════════
+const SoundEngine = (() => {
+  let initialized = false;
+  let muted       = false;
+
+  // ── SHARED FX BUS ────────────────────────────────────────────
+  // TD: Reverb CHOP + Chorus CHOP on master bus
+  let masterVol, reverbBus, chorusBus;
+
+  // ── DRONE BANK ───────────────────────────────────────────────
+  // 10 partials of a harmonic series. Stage data gates how many are audible.
+  // TD: 10 Oscillator CHOPs → Math CHOP (multiply by partial gain array)
+  //
+  // Partial ratios: 1× 2× 3× 4× 5× 6× 7× 8× 9× 10×
+  // (fundamental, octave, fifth, 2nd octave, major third, fifth, minor 7th...)
+  // Slight per-partial detuning adds organic shimmer.
+  const PARTIAL_RATIOS  = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
+  const PARTIAL_DETUNE  = [0, +1.2, -0.8, +0.5, -1.5, +0.9, -0.6, +1.1, -0.4, +0.7]; // cents
+  // Volume envelope per partial (higher partials softer by nature)
+  const PARTIAL_VOL_DB  = [-18, -24, -28, -30, -32, -34, -36, -37, -38, -39];
+
+  let dronePartials = []; // array of { osc, gainNode, targetGain }
+  let droneBase     = CONFIG.DRONE_BASE; // Hz — shifts with stage
+  let touchBendSemitones = 0;           // ±1 st, set by touch X
+  let touchBrightness    = 0.5;         // 0..1, set by touch Y
+
+  // ── BREATH LFO ───────────────────────────────────────────────
+  // Amplitude-modulates the drone bank at a rate tied to discharge.
+  // TD: LFO CHOP → Math CHOP (multiply) → Audio Out CHOP
+  let breathLFO, breathDepthGain;
+  let breathRate = 0.1; // Hz — updated from discharge
+
+  // ── PULSE SYNTH (River B layer) ──────────────────────────────
+  let pulseSynth, pulseLoop;
+
+  // ── BLOOM SYNTH (touch events) ───────────────────────────────
+  // Pentatonic arpeggio that ripples upward on touch-down.
+  // TD: Sequencer CHOP triggered by CHOP Execute DAT
+  let bloomSynth;
+  let lastBloomTime = 0;
+  const BLOOM_COOLDOWN_MS = 320; // min ms between blooms
+
+  // ── WETLAND FILTER CHAIN ─────────────────────────────────────
+  let wetlandNoise, wetlandFilter, wetlandGain;
+
+  // ── AERIAL SHIMMER ───────────────────────────────────────────
+  let shimmerSynth;
+
+  // ─────────────────────────────────────────────────────────────
+  // INIT
+  // Must be called inside a user gesture handler (browser requirement).
+  // ─────────────────────────────────────────────────────────────
+  async function init() {
+    if (initialized) return;
+    initialized = true;
+
+    await Tone.start();
+    Tone.Transport.bpm.value = 72;
+
+    // ── Master chain: Chorus → Reverb → Volume ────────────────
+    masterVol  = new Tone.Volume(-10).toDestination();
+
+    reverbBus  = new Tone.Reverb({ decay: 7, preDelay: 0.04, wet: 0.52 });
+    await reverbBus.ready;
+    reverbBus.connect(masterVol);
+
+    chorusBus  = new Tone.Chorus({ frequency: 0.4, delayTime: 3.5, depth: 0.35, wet: 0.3 }).start();
+    chorusBus.connect(reverbBus);
+
+    // ── BUILD DRONE PARTIAL BANK ──────────────────────────────
+    // Each partial: OmniOscillator → individual Gain → chorus bus
+    // TD: replicate as 10 Oscillator CHOPs each with a Gain CHOP,
+    //     all summing into one Audio bus before the Reverb CHOP.
+    for (let i = 0; i < PARTIAL_RATIOS.length; i++) {
+      const ratio   = PARTIAL_RATIOS[i];
+      const detune  = PARTIAL_DETUNE[i];
+      const volDb   = PARTIAL_VOL_DB[i];
+
+      const osc = new Tone.OmniOscillator({
+        type:    i === 0 ? 'sine' : i < 3 ? 'sine' : 'triangle',
+        // Fundamental + harmonic multiple + micro-detune
+        frequency: droneBase * ratio * Math.pow(2, detune / 1200),
+        volume:  -99, // start silent; gated up by stage data
+      });
+
+      const gainNode = new Tone.Gain(0);
+      osc.connect(gainNode);
+      gainNode.connect(chorusBus);
+      osc.start();
+
+      dronePartials.push({
+        osc,
+        gainNode,
+        baseVolDb: volDb,
+        targetGain: 0,
+        ratio,
+      });
+    }
+
+    // ── BREATH LFO ────────────────────────────────────────────
+    // A slow sine LFO that rides the drone's master amplitude.
+    // TD: LFO CHOP (type=sine, period driven by discharge channel)
+    //     → Gain CHOP controlling drone bus level
+    breathLFO = new Tone.LFO({
+      type:      'sine',
+      frequency: breathRate,
+      min:       0.55,  // never fully off — river always breathing
+      max:       1.0,
+    }).start();
+
+    breathDepthGain = new Tone.Gain(1);
+    // Wire LFO to modulate the gain of every drone partial indirectly
+    // via a shared amplitude gain node
+    const droneAmplitude = new Tone.Gain(1);
+    breathLFO.connect(droneAmplitude.gain);
+
+    // Re-route: partials → droneAmplitude → chorus
+    // (We re-wire gainNodes through droneAmplitude)
+    for (const p of dronePartials) {
+      p.gainNode.disconnect();
+      p.gainNode.connect(droneAmplitude);
+    }
+    droneAmplitude.connect(chorusBus);
+
+    // ── PULSE SYNTH (River layer B) ───────────────────────────
+    // Warm pad chords, metered to discharge BPM.
+    // TD: PolySynth CHOP triggered by a Beat CHOP at discharge BPM
+    pulseSynth = new Tone.PolySynth(Tone.Synth, {
+      oscillator: { type: 'sine' },
+      envelope:   { attack: 1.1, decay: 0.3, sustain: 0.5, release: 3.2 },
+      volume:     -26,
+    }).connect(reverbBus);
+
+    pulseLoop = new Tone.Loop(time => {
+      if (muted) return;
+      const root  = AppState.mappedFrequency || CONFIG.PENTATONIC_C3[2];
+      const fifth = root * 1.5;
+      const vel   = 0.35 + touchBrightness * 0.25; // brighter when touch is high
+      pulseSynth.triggerAttackRelease([root, fifth], '1n', time, vel);
+    }, '2n');
+    pulseLoop.start(0);
+
+    // ── BLOOM SYNTH (touch-down events) ──────────────────────
+    // Bright pentatonic arpeggio rippling upward — the "reward" moment.
+    // TD: Sequencer CHOP (8 steps) triggered by a CHOP Execute DAT
+    //     on touch-down event, pitch row set from current stage freq.
+    bloomSynth = new Tone.PolySynth(Tone.Synth, {
+      oscillator: { type: 'triangle8' },  // triangle with 8 harmonics
+      envelope:   { attack: 0.01, decay: 0.28, sustain: 0.05, release: 1.4 },
+      volume:     -22,
+    }).connect(reverbBus);
+
+    // ── WETLAND NOISE / FILTER ────────────────────────────────
+    wetlandNoise  = new Tone.Noise('pink').start();
+    wetlandFilter = new Tone.Filter({ type: 'highpass', frequency: 1400, Q: 2.2 });
+    wetlandGain   = new Tone.Gain(0);
+    wetlandNoise.connect(wetlandFilter);
+    wetlandFilter.connect(wetlandGain);
+    wetlandGain.connect(reverbBus);
+
+    // ── AERIAL SHIMMER ────────────────────────────────────────
+    shimmerSynth = new Tone.PolySynth(Tone.Synth, {
+      oscillator: { type: 'triangle' },
+      envelope:   { attack: 0.01, decay: 0.25, sustain: 0.08, release: 2.2 },
+      volume:     -26,
+    }).connect(reverbBus);
+
+    Tone.Transport.start();
+    console.log('[SoundEngine v2] Deep drone initialized. Partials: 10 | Breath LFO: active');
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // updateRiverData  — called every time USGS data refreshes
+  //
+  // Stage → harmonic complexity (how many partials are active)
+  // Discharge → breath LFO rate
+  // TD: Drive via two separate channel outputs from a Web CHOP
+  // ─────────────────────────────────────────────────────────────
+  function updateRiverData(stageFt, dischargeCFS) {
+    if (!initialized) return;
+
+    // ── 1. Stage → root frequency + partial count ─────────────
+    const stageNorm   = DataMapper.normalize(stageFt, CONFIG.STAGE_MIN, CONFIG.STAGE_MAX);
+    const rootFreq    = DataMapper.stageToFrequency(stageFt);
+    droneBase         = rootFreq * 0.5; // drone one octave below mapped note
+
+    // How many partials are active: 2 at min stage, all 10 at flood
+    // TD: Math CHOP → Floor → Lookup CHOP indexing a 10-element gain array
+    const activeCount = Math.round(2 + stageNorm * 8); // 2..10
+
+    for (let i = 0; i < dronePartials.length; i++) {
+      const p          = dronePartials[i];
+      const isActive   = i < activeCount;
+      const targetDb   = isActive ? p.baseVolDb : -99;
+
+      // Update frequency (preserve bend + detune)
+      const newFreq = droneBase * p.ratio * Math.pow(2, PARTIAL_DETUNE[i] / 1200)
+                    * Math.pow(2, touchBendSemitones / 12);
+      p.osc.frequency.rampTo(newFreq, 4.0); // 4s glide — no pops
+
+      // Ramp gain (dB → linear for Tone.js Gain node)
+      // TD: Lag CHOP (lag=2.5s) before Gain CHOP
+      const targetLinear = targetDb < -90 ? 0 : Math.pow(10, targetDb / 20);
+      p.gainNode.gain.rampTo(targetLinear, 2.5);
+    }
+
+    AppState.mappedFrequency   = rootFreq;
+    AppState.activePartialCount = activeCount;
+
+    // ── 2. Discharge → breath LFO rate ────────────────────────
+    // Low flow (20k cfs) = one breath per ~10 seconds (0.1 Hz)
+    // Flood   (150k cfs) = one breath per ~2.5 seconds (0.4 Hz)
+    // TD: Math CHOP normalizing discharge channel → Lag CHOP → LFO CHOP period
+    const newBreathRate = DataMapper.remap(
+      dischargeCFS,
+      CONFIG.DISCHARGE_MIN, CONFIG.DISCHARGE_MAX,
+      0.08,  // very slow at low flow — tidal
+      0.40,  // faster at flood — urgent
+    );
+    breathLFO.frequency.rampTo(newBreathRate, 6.0); // 6s transition — imperceptible
+    breathRate = newBreathRate;
+
+    // ── 3. Discharge → pulse loop BPM ─────────────────────────
+    const bpm = DataMapper.dischargeToBPM(dischargeCFS);
+    Tone.Transport.bpm.rampTo(bpm, 5.0);
+
+    console.log(
+      `[Drone] Stage ${stageFt}ft → ${activeCount} partials active | ` +
+      `root ${rootFreq.toFixed(1)}Hz | ` +
+      `breath ${newBreathRate.toFixed(3)}Hz | ` +
+      `BPM ${bpm.toFixed(0)}`
+    );
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // onTouchMove  — called continuously as visitor moves on canvas
+  //
+  // xNorm (0..1, left→right) → pitch bend ±1 semitone on all partials
+  // yNorm (0..1, top→bottom) → harmonic brightness (high touch = bright)
+  //
+  // TD: Mouse/Touch CHOP → Math CHOP (remap) → two separate channels
+  //     driving Oscillator CHOP frequency and Gain CHOP level array
+  // ─────────────────────────────────────────────────────────────
+  function onTouchMove(xNorm, yNorm) {
+    if (!initialized) return;
+
+    // xNorm → bend: left = -1 semitone, center = 0, right = +1 semitone
+    // TD: Math CHOP: xNorm * 2 - 1 → * 1.0 → pitch bend channel
+    touchBendSemitones = (xNorm * 2 - 1) * 1.0;
+
+    // yNorm → brightness: 0 = top (bright, high touch) → 1 = bottom (dark)
+    // Invert: touching high on screen = high brightness
+    touchBrightness = 1 - yNorm;
+
+    // Apply bend to all partials immediately (smooth 0.08s)
+    // This is fast — it should feel like bending a string
+    for (const p of dronePartials) {
+      const newFreq = droneBase * p.ratio
+                    * Math.pow(2, PARTIAL_DETUNE[dronePartials.indexOf(p)] / 1200)
+                    * Math.pow(2, touchBendSemitones / 12);
+      p.osc.frequency.rampTo(newFreq, 0.08);
+    }
+
+    // Brightness: boost or cut upper partials in real time
+    // TD: Lookup CHOP on brightness channel → scale upper gain values
+    const activeCount = AppState.activePartialCount || 4;
+    for (let i = 0; i < dronePartials.length; i++) {
+      if (i >= activeCount) continue;
+      const p = dronePartials[i];
+      // Upper partials (index > 2) respond to brightness
+      const brightnessBoost = i > 2 ? touchBrightness : 1.0;
+      const targetDb  = p.baseVolDb + (i > 2 ? (touchBrightness - 0.5) * 8 : 0);
+      const targetLin = targetDb < -90 ? 0 : Math.pow(10, targetDb / 20);
+      p.gainNode.gain.rampTo(targetLin, 0.12);
+    }
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // onTouchDown  — called on each new touch/click event
+  //
+  // Triggers a bloom: pentatonic arpeggio rippling upward from
+  // the current root frequency, velocity scaled to touch position.
+  //
+  // TD: CHOP Execute DAT on touch-down channel →
+  //     Sequencer CHOP (8 steps) → PolySynth audio output
+  // ─────────────────────────────────────────────────────────────
+  function onTouchDown(xNorm, yNorm) {
+    if (!initialized || muted) return;
+
+    const now = performance.now();
+    if (now - lastBloomTime < BLOOM_COOLDOWN_MS) return; // debounce
+    lastBloomTime = now;
+
+    const root       = AppState.mappedFrequency || CONFIG.PENTATONIC_C3[2];
+    const brightness = 1 - yNorm; // top = bright = higher register
+    const velocity   = 0.4 + brightness * 0.45;
+
+    // Build 6-note upward arpeggio from current pentatonic scale position
+    // Start at the root, walk up the scale
+    const scale      = CONFIG.PENTATONIC_C3;
+    const rootIdx    = scale.reduce((best, f, i) =>
+      Math.abs(f - root) < Math.abs(scale[best] - root) ? i : best, 0);
+
+    // 6 notes up from root index, wrapping scale
+    const arpNotes = [];
+    for (let step = 0; step < 6; step++) {
+      arpNotes.push(scale[(rootIdx + step) % scale.length]);
+    }
+
+    // Schedule arpeggio — stagger by 80ms per note
+    // TD: Sequencer CHOP with step time = 80ms, triggered on touch event
+    const toneNow = Tone.now();
+    arpNotes.forEach((freq, i) => {
+      bloomSynth.triggerAttackRelease(
+        freq,
+        '8n',
+        toneNow + i * 0.08, // 80ms stagger
+        velocity * (1 - i * 0.08), // slight velocity decay up the arp
+      );
+    });
+
+    // Brief drone brightness surge on touch
+    // TD: Envelope CHOP triggered by touch event → Gain CHOP on drone bus
+    for (const p of dronePartials) {
+      const currentGain = p.gainNode.gain.value;
+      p.gainNode.gain.rampTo(currentGain * 1.35, 0.05);
+      setTimeout(() => {
+        if (initialized) p.gainNode.gain.rampTo(currentGain, 0.8);
+      }, 120);
+    }
+
+    console.log(`[Bloom] Root ${root.toFixed(1)}Hz | ${arpNotes.length} notes | vel ${velocity.toFixed(2)}`);
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // updateWetlandFilter  — called on temperature data update
+  // ─────────────────────────────────────────────────────────────
+  function updateWetlandFilter(tempC) {
+    if (!initialized) return;
+    const { type, frequency, Q } = DataMapper.tempToFilter(tempC);
+    wetlandFilter.type = type;
+    wetlandFilter.frequency.rampTo(frequency, 2.5);
+    wetlandFilter.Q.rampTo(Q, 2.5);
+    const vol = AppState.activeMode === 'wetland' ? 0.09 : 0;
+    wetlandGain.gain.rampTo(vol, 1.5);
+    console.log(`[Wetland] ${tempC}°C → ${type} @ ${frequency.toFixed(0)}Hz Q=${Q.toFixed(1)}`);
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // triggerAerialSighting  — called on eagle count increase
+  // ─────────────────────────────────────────────────────────────
+  function triggerAerialSighting(count) {
+    if (!initialized || muted) return;
+    const now = Tone.now();
+    const hi    = CONFIG.PENTATONIC_C3.slice(-6);
+    // Two-note shimmer chord, randomly picked from high register
+    const noteA = hi[Math.floor(Math.random() * hi.length)];
+    const noteB = hi[Math.floor(Math.random() * hi.length)];
+    const vel   = 0.45 + Math.min(count, 8) * 0.04;
+    shimmerSynth.triggerAttackRelease([noteA, noteB * 1.19], '8n', now, vel);
+    // Second harmonic echo 0.22s later
+    shimmerSynth.triggerAttackRelease([noteA * 2], '16n', now + 0.22, vel * 0.45);
+    console.log(`[Aerial] Eagle ×${count} → shimmer ${noteA.toFixed(0)}Hz`);
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // setMode / setMuted  — mode crossfades and global mute
+  // ─────────────────────────────────────────────────────────────
+  function setMode(mode) {
+    if (!initialized) return;
+    wetlandGain.gain.rampTo(mode === 'wetland' ? 0.09 : 0, 1.4);
+  }
+
+  function setMuted(val) {
+    muted = val;
+    if (initialized) Tone.Destination.mute = val;
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // DEBUG  — exposes internals for console inspection
+  // TD equivalent: Info CHOP
+  // ─────────────────────────────────────────────────────────────
+  function debugState() {
+    return {
+      partials:     dronePartials.length,
+      activeCount:  AppState.activePartialCount,
+      droneBase:    droneBase.toFixed(2) + ' Hz',
+      breathRate:   breathRate.toFixed(3) + ' Hz',
+      bendSemitones:touchBendSemitones.toFixed(3),
+      brightness:   touchBrightness.toFixed(3),
+      bpm:          Tone.Transport.bpm.value.toFixed(1),
+    };
+  }
+
+  // Public API
+  return {
+    init,
+    updateRiverData,        // replaces updateRiverPulse
+    updateWetlandFilter,
+    triggerAerialSighting,
+    onTouchMove,
+    onTouchDown,
+    setMode,
+    setMuted,
+    debugState,
+  };
+})();
+
+
+// ═══════════════════════════════════════════════════════════════════
+// MODULE 5: Renderer  (Canvas 2D)
+// TD equivalent: Geometry/COMP with GLSL MAT
+// ═══════════════════════════════════════════════════════════════════
+const Renderer = (() => {
+  const canvas = document.getElementById('main-canvas');
+  const cx     = canvas.getContext('2d');
+  let   width  = 0, height = 0;
+  let   frame  = 0;
+
+  // Particle system for river current
+  const PARTICLE_COUNT = 220;
+  let   particles      = [];
+
+  // Botanical growth (wetland mode)
+  let   stems          = [];
+
+  // Eagle paths (aerial mode)
+  let   eaglePaths     = [];
+
+  function resize() {
+    const c = document.getElementById('canvas-container');
+    canvas.width  = width  = c.offsetWidth;
+    canvas.height = height = c.offsetHeight;
+    initParticles();
+    buildBackground();
+  }
+
+  // ── BACKGROUND BITMAP ────────────────────────────────────────
+  let bgBitmap = null;
+  function buildBackground() {
+    const off = document.createElement('canvas');
+    off.width = width; off.height = height;
+    const oc  = off.getContext('2d');
+
+    // Deep river gradient
+    const g = oc.createLinearGradient(0, 0, 0, height);
+    g.addColorStop(0.0, '#010508');
+    g.addColorStop(0.5, '#020c10');
+    g.addColorStop(1.0, '#010406');
+    oc.fillStyle = g; oc.fillRect(0, 0, width, height);
+
+    // Faint topographic contours (horizontal)
+    oc.save();
+    oc.strokeStyle = 'rgba(0,212,232,0.025)';
+    oc.lineWidth   = 0.5;
+    for (let y = 0; y < height; y += 32) {
+      oc.beginPath();
+      // Wavy contour line
+      oc.moveTo(0, y);
+      for (let x = 0; x <= width; x += 40) {
+        const wave = Math.sin((x / width) * Math.PI * 5 + y * 0.02) * 4;
+        oc.lineTo(x, y + wave);
+      }
+      oc.stroke();
+    }
+    oc.restore();
+
+    // Subtle vertical grain
+    oc.save();
+    for (let i = 0; i < 300; i++) {
+      const x  = Math.random() * width;
+      const y1 = Math.random() * height;
+      const y2 = y1 + Math.random() * 60 + 10;
+      oc.strokeStyle = `rgba(0,212,232,${Math.random() * 0.02})`;
+      oc.lineWidth   = Math.random() * 0.4 + 0.1;
+      oc.beginPath(); oc.moveTo(x, y1); oc.lineTo(x, y2); oc.stroke();
+    }
+    oc.restore();
+
+    bgBitmap = off;
+  }
+
+  // ── PARTICLES ────────────────────────────────────────────────
+  function initParticles() {
+    particles = [];
+    for (let i = 0; i < PARTICLE_COUNT; i++) {
+      particles.push(newParticle(true));
+    }
+  }
+
+  function newParticle(scatter = false) {
+    return {
+      x:      scatter ? Math.random() * width : -10,
+      y:      height * 0.3 + Math.random() * height * 0.6,
+      vx:     Math.random() * 0.8 + 0.3,
+      vy:     (Math.random() - 0.5) * 0.2,
+      size:   Math.random() * 1.8 + 0.4,
+      alpha:  Math.random() * 0.7 + 0.15,
+      hue:    180 + Math.random() * 30, // cyan family
+      life:   1,
+      wander: Math.random() * Math.PI * 2,
+    };
+  }
+
+  // ── BOTANICAL STEM (wetland) ─────────────────────────────────
+  function spawnStem(x, y) {
+    stems.push({
+      x, y: y || height * 0.8,
+      segments: [],
+      age:      0,
+      maxAge:   280 + Math.random() * 120,
+      growing:  true,
+      hue:      130 + Math.random() * 20, // jade
+    });
+  }
+
+  // ── EAGLE PATH (aerial) ──────────────────────────────────────
+  function spawnEaglePath() {
+    const sx = Math.random() < 0.5 ? -20 : width + 20;
+    const ex = sx < 0 ? width + 20 : -20;
+    eaglePaths.push({
+      x:     sx,
+      y:     height * (0.1 + Math.random() * 0.35),
+      tx:    ex,
+      ty:    height * (0.05 + Math.random() * 0.3),
+      trail: [],
+      age:   0,
+      maxAge: 200 + Math.random() * 100,
+      spd:    1.8 + Math.random() * 1.2,
+    });
+  }
+
+  // ── DRAW FRAME ───────────────────────────────────────────────
+  function drawFrame() {
+    frame++;
+    if (!bgBitmap) return;
+
+    // Background
+    cx.drawImage(bgBitmap, 0, 0);
+
+    // Mode-specific visuals
+    const mode = AppState.activeMode;
+
+    // ── River current (always on) ──────────────────────────────
+    drawRiverCurrent();
+
+    // ── Wetland botanical growth ───────────────────────────────
+    if (mode === 'wetland') {
+      if (frame % 8 === 0 && stems.length < 18) {
+        spawnStem(width * 0.1 + Math.random() * width * 0.8);
+      }
+      drawStems();
+    }
+
+    // ── Aerial paths ───────────────────────────────────────────
+    if (mode === 'aerial') {
+      drawEaglePaths();
+    }
+
+    requestAnimationFrame(drawFrame);
+  }
+
+  function drawRiverCurrent() {
+    const glow     = DataMapper.stageToGlow(AppState.rawStage || 12);
+    const speedMul = DataMapper.dischargeToSpeed(AppState.rawDischarge || 50000);
+    const breath   = Math.sin(frame * 0.008) * 0.5 + 0.5;
+
+    cx.save();
+    cx.globalCompositeOperation = 'screen';
+
+    for (const p of particles) {
+      // Update
+      p.wander += 0.018;
+      p.vx      = (0.5 + glow * 2.5) * speedMul + Math.cos(p.wander) * 0.12;
+      p.vy     += (Math.random() - 0.5) * 0.04;
+      p.vy     *= 0.98;
+      p.x      += p.vx;
+      p.y      += p.vy;
+
+      if (p.x > width + 10) {
+        Object.assign(p, newParticle(false));
+      }
+
+      // Draw
+      const a = p.alpha * (0.4 + glow * 0.6) * (0.7 + breath * 0.3) * p.life;
+      if (a < 0.01) continue;
+
+      cx.globalAlpha = a;
+      cx.fillStyle   = `hsl(${p.hue}, 90%, ${40 + glow * 35}%)`;
+      cx.beginPath();
+      cx.arc(p.x, p.y, p.size * (0.6 + glow * 0.8), 0, Math.PI * 2);
+      cx.fill();
+
+      // Glow halo
+      if (glow > 0.4 && Math.random() > 0.7) {
+        cx.globalAlpha = a * 0.08;
+        cx.beginPath();
+        cx.arc(p.x, p.y, p.size * 10, 0, Math.PI * 2);
+        cx.fill();
+      }
+    }
+
+    cx.restore();
+
+    // Horizontal glow band — bioluminescent "river skin"
+    cx.save();
+    const riverY  = height * 0.55;
+    const band    = cx.createLinearGradient(0, riverY - 40, 0, riverY + 40);
+    band.addColorStop(0,   'rgba(0,212,232,0)');
+    band.addColorStop(0.5, `rgba(0,212,232,${(0.015 + glow * 0.04) * (0.6 + breath * 0.4)})`);
+    band.addColorStop(1,   'rgba(0,212,232,0)');
+    cx.fillStyle = band;
+    cx.fillRect(0, riverY - 40, width, 80);
+    cx.restore();
+  }
+
+  function drawStems() {
+    const temp   = AppState.rawTemp || 15;
+    const tNorm  = DataMapper.normalize(temp, CONFIG.TEMP_MIN, CONFIG.TEMP_MAX);
+    const complexity = 0.3 + tNorm * 0.7;
+
+    for (let i = stems.length - 1; i >= 0; i--) {
+      const s = stems[i];
+      s.age++;
+      const growT = Math.min(s.age / s.maxAge, 1);
+
+      // Grow a new segment
+      if (s.growing && s.age % 3 === 0) {
+        const prev  = s.segments[s.segments.length - 1] || { x: s.x, y: s.y };
+        const angle = -Math.PI / 2 + (Math.random() - 0.5) * 0.5;
+        const len   = 6 + Math.random() * 8;
+        s.segments.push({
+          x1: prev.x, y1: prev.y,
+          x2: prev.x + Math.cos(angle) * len,
+          y2: prev.y + Math.sin(angle) * len,
+          hasLeaf: Math.random() < complexity * 0.6,
+        });
+        if (s.segments.length > 22) s.growing = false;
+      }
+
+      // Draw stem
+      cx.save();
+      cx.strokeStyle = `hsl(${s.hue}, 75%, 35%)`;
+      cx.lineWidth   = 1.2;
+      cx.lineCap     = 'round';
+      cx.globalAlpha = Math.max(0, (1 - growT * growT) * 0.85 + 0.15);
+
+      for (let j = 0; j < s.segments.length; j++) {
+        const seg = s.segments[j];
+        cx.beginPath();
+        cx.moveTo(seg.x1, seg.y1);
+        cx.lineTo(seg.x2, seg.y2);
+        cx.stroke();
+
+        if (seg.hasLeaf) {
+          const mx  = (seg.x1 + seg.x2) / 2;
+          const my  = (seg.y1 + seg.y2) / 2;
+          const ang = Math.atan2(seg.y2 - seg.y1, seg.x2 - seg.x1);
+          cx.save();
+          cx.translate(mx, my);
+          cx.rotate(ang + Math.PI / 2);
+          cx.fillStyle   = `hsl(${s.hue}, 65%, 28%)`;
+          cx.strokeStyle = `hsl(${s.hue}, 70%, 45%)`;
+          cx.lineWidth   = 0.5;
+          cx.beginPath();
+          cx.ellipse(0, -5, 3, 7, 0, 0, Math.PI * 2);
+          cx.fill(); cx.stroke();
+          cx.restore();
+        }
+      }
+      cx.restore();
+
+      if (s.age > s.maxAge * 1.2) stems.splice(i, 1);
+    }
+  }
+
+  function drawEaglePaths() {
+    for (let i = eaglePaths.length - 1; i >= 0; i--) {
+      const ep = eaglePaths[i];
+      ep.age++;
+
+      const t  = ep.age / ep.maxAge;
+      ep.x    += (ep.tx - ep.x) * 0.008 * ep.spd;
+      ep.y    += (ep.ty - ep.y) * 0.008 + Math.sin(ep.age * 0.04) * 0.6;
+      ep.trail.push({ x: ep.x, y: ep.y });
+      if (ep.trail.length > 60) ep.trail.shift();
+
+      cx.save();
+      cx.globalCompositeOperation = 'screen';
+      cx.lineCap = 'round';
+
+      for (let j = 1; j < ep.trail.length; j++) {
+        const tl = j / ep.trail.length;
+        const a  = tl * tl * (1 - t) * 0.55;
+        if (a < 0.01) continue;
+        cx.globalAlpha = a;
+        cx.strokeStyle = `hsl(45, 90%, ${50 + tl * 25}%)`;
+        cx.lineWidth   = 1.5 * tl;
+        cx.beginPath();
+        cx.moveTo(ep.trail[j-1].x, ep.trail[j-1].y);
+        cx.lineTo(ep.trail[j].x, ep.trail[j].y);
+        cx.stroke();
+      }
+
+      // Eagle dot
+      cx.globalAlpha = (1 - t) * 0.9;
+      cx.fillStyle   = '#f0c040';
+      cx.beginPath();
+      cx.arc(ep.x, ep.y, 2.5, 0, Math.PI * 2);
+      cx.fill();
+
+      cx.restore();
+
+      if (ep.age > ep.maxAge) eaglePaths.splice(i, 1);
+    }
+  }
+
+  function triggerEagleEvent() {
+    spawnEaglePath();
+  }
+
+  window.addEventListener('resize', resize);
+
+  return { resize, drawFrame, triggerEagleEvent };
+})();
+
+
+// ═══════════════════════════════════════════════════════════════════
+// MODULE 6: SparklineRenderer  (SVG sparklines)
+// TD equivalent: SOP render to texture
+// ═══════════════════════════════════════════════════════════════════
+function renderSparkline(svgId, values, colorVar) {
+  const svg = document.getElementById(svgId);
+  if (!svg || !values || values.length < 2) return;
+
+  const W = 240, H = 28;
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  const range = max - min || 1;
+
+  const pts = values.map((v, i) => {
+    const x = (i / (values.length - 1)) * W;
+    const y = H - ((v - min) / range) * (H - 4) - 2;
+    return `${x.toFixed(1)},${y.toFixed(1)}`;
+  }).join(' ');
+
+  const color = getComputedStyle(document.documentElement)
+    .getPropertyValue(colorVar).trim() || '#00d4e8';
+
+  svg.innerHTML = `
+    <polyline points="${pts}"
+      fill="none"
+      stroke="${color}"
+      stroke-width="1.2"
+      stroke-linecap="round"
+      stroke-linejoin="round"
+      opacity="0.55"/>
+    <polyline points="0,${H} ${pts} ${W},${H}"
+      fill="${color}"
+      opacity="0.07"
+      stroke="none"/>
+  `;
+}
+
+
+// ═══════════════════════════════════════════════════════════════════
+// MODULE 7: AppState  — shared reactive store
+// TD equivalent: Storage COMP / CHOP channels
+// ═══════════════════════════════════════════════════════════════════
+const AppState = {
+  activeMode:         'river',
+  soundEnabled:       false,
+  rawStage:           null,
+  rawDischarge:       null,
+  rawTemp:            null,
+  rawEagles:          0,
+  mappedFrequency:    null,
+  activePartialCount: 4,
+  lastFetchTime:      null,
+  fetchInProgress:    false,
+  touching:           false,
+  mouseDown:          false,
+};
+
+
+// ═══════════════════════════════════════════════════════════════════
+// MODULE 8: AppController  — orchestrates all modules
+// ═══════════════════════════════════════════════════════════════════
+
+/** Update the sidebar UI with fresh data */
+function updateUI(data, eagleData) {
+  // Stage
+  if (data.stage !== null) {
+    const el = document.getElementById('val-stage');
+    el.textContent = data.stage.toFixed(2);
+    el.className   = 'node-value river';
+    document.getElementById('unit-stage').style.display = '';
+    document.getElementById('sub-stage').textContent =
+      `${new Date(data.timestamp).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'})} · USGS 05451500`
+      + (data.stageSuspect ? ' ⚠ suspect' : '');
+    renderSparkline('spark-stage', data.history.stage, '--river-cyan');
+  }
+
+  // Discharge
+  if (data.discharge !== null) {
+    const el = document.getElementById('val-discharge');
+    el.textContent = data.discharge.toLocaleString('en-US', { maximumFractionDigits: 0 });
+    el.className   = 'node-value river';
+    document.getElementById('unit-discharge').style.display = '';
+    renderSparkline('spark-discharge', data.history.discharge, '--river-deep');
+  }
+
+  // Temperature
+  if (data.temperature !== null) {
+    const el = document.getElementById('val-temp');
+    el.textContent = data.temperature.toFixed(1);
+    el.className   = 'node-value wetland';
+    document.getElementById('unit-temp').style.display = '';
+    document.getElementById('sub-temp').textContent =
+      `Water temp · ${data.temperature < 10 ? 'Cold water' : data.temperature < 18 ? 'Cool' : 'Warm'} state`;
+  }
+
+  // Eagles
+  if (eagleData) {
+    const el = document.getElementById('val-eagles');
+    const count = eagleData.mock ? '—' : eagleData.count;
+    el.textContent = count;
+    el.className   = 'node-value aerial' + (eagleData.mock ? ' loading' : '');
+    document.getElementById('sub-eagles').textContent = eagleData.mock
+      ? 'Add eBird API key to CONFIG'
+      : `${eagleData.count} obs · last ${CONFIG.EBIRD_DAYS_BACK} days`;
+  }
+}
+
+/** Set status bar state */
+function setStatus(state, msg) {
+  const dot  = document.getElementById('status-dot');
+  const text = document.getElementById('status-text');
+  dot.className  = state;  // 'live' | 'error' | 'fetch'
+  text.textContent = msg;
+}
+
+/** Show error toast */
+function showError(msg) {
+  const el = document.getElementById('error-toast');
+  el.textContent = msg;
+  el.classList.add('show');
+  setTimeout(() => el.classList.remove('show'), 6000);
+}
+
+/** Master fetch + update cycle */
+async function fetchAllData() {
+  if (AppState.fetchInProgress) return;
+  AppState.fetchInProgress = true;
+
+  try {
+    // Parallel fetch: USGS + eBird
+    const [usgsData, eagleData] = await Promise.allSettled([
+      USGSFetcher.fetchInstantaneous(),
+      eBirdFetcher.fetchEagleSightings(),
+    ]);
+
+    // Handle USGS result
+    if (usgsData.status === 'fulfilled') {
+      const d = usgsData.value;
+
+      // Update app state
+      AppState.rawStage     = d.stage;
+      AppState.rawDischarge = d.discharge;
+      AppState.rawTemp      = d.temperature;
+      AppState.lastFetchTime = new Date();
+
+      // Update sound engine
+      if (d.stage !== null && d.discharge !== null) {
+        SoundEngine.updateRiverData(d.stage, d.discharge);
+      }
+      if (d.temperature !== null) {
+        SoundEngine.updateWetlandFilter(d.temperature);
+      }
+
+      // Update UI
+      const eagleResult = eagleData.status === 'fulfilled' ? eagleData.value : null;
+      updateUI(d, eagleResult);
+
+      // Eagle events
+      if (eagleResult && eagleResult.count > AppState.rawEagles) {
+        SoundEngine.triggerAerialSighting(eagleResult.count);
+        Renderer.triggerEagleEvent();
+      }
+      if (eagleResult) AppState.rawEagles = eagleResult.count || 0;
+
+      // Status: live
+      const t = AppState.lastFetchTime.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit', second:'2-digit'});
+      setStatus('live', 'Live · USGS SensorThings');
+      document.getElementById('last-fetch').textContent = `Updated ${t}`;
+
+    } else {
+      const err = usgsData.reason?.message || 'Unknown error';
+      setStatus('error', `Error · ${err}`);
+      showError(`USGS fetch failed: ${err}\n\nCheck network connection. CORS proxy may be required in local dev.`);
+      // Mark indicator dots as error
+      document.querySelectorAll('.node-dot').forEach(d => d.classList.add('err'));
+    }
+
+  } finally {
+    AppState.fetchInProgress = false;
+  }
+}
+
+/** Mode switcher — updates UI, sound routing, visuals */
+function setMode(mode) {
+  AppState.activeMode = mode;
+
+  // Update mode buttons
+  document.querySelectorAll('.mode-btn').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.mode === mode);
+  });
+
+  // Update sound routing
+  SoundEngine.setMode(mode);
+
+  console.log(`[App] Mode → ${mode}`);
+}
+
+/** Sound toggle */
+async function toggleSound() {
+  const btn = document.getElementById('btn-sound');
+  if (!AppState.soundEnabled) {
+    await SoundEngine.init();
+    AppState.soundEnabled = true;
+    SoundEngine.setMuted(false);
+    btn.textContent = '♪ Sound On';
+    btn.classList.add('active');
+    // Dismiss intro
+    const intro = document.getElementById('intro-overlay');
+    intro.classList.add('hidden');
+    setTimeout(() => intro.style.display = 'none', 1800);
+  } else {
+    AppState.soundEnabled = false;
+    SoundEngine.setMuted(true);
+    btn.textContent = '♪ Sound Off';
+    btn.classList.remove('active');
+  }
+}
+
+// ── CANVAS INTERACTION → SOUND ENGINE ────────────────────────────
+// Translates pointer position into normalized 0..1 coords
+// and forwards to SoundEngine for pitch bend + brightness control.
+// TD equivalent: Mouse/Touch CHOP → Math CHOP (remap 0..1)
+
+function getCanvasNorm(e) {
+  const rect = document.getElementById('main-canvas').getBoundingClientRect();
+  const src  = e.touches ? e.touches[0] : e;
+  return {
+    x: Math.max(0, Math.min(1, (src.clientX - rect.left)  / rect.width)),
+    y: Math.max(0, Math.min(1, (src.clientY - rect.top)   / rect.height)),
+  };
+}
+
+// Touch start → activate sound on first touch + fire bloom
+document.getElementById('main-canvas').addEventListener('touchstart', async e => {
+  if (!AppState.soundEnabled) await toggleSound();
+  const { x, y } = getCanvasNorm(e);
+  SoundEngine.onTouchDown(x, y);
+  AppState.touching = true;
+}, { passive: true });
+
+// Touch move → continuous pitch bend + brightness
+document.getElementById('main-canvas').addEventListener('touchmove', e => {
+  if (!AppState.soundEnabled) return;
+  const { x, y } = getCanvasNorm(e);
+  SoundEngine.onTouchMove(x, y);
+}, { passive: true });
+
+document.getElementById('main-canvas').addEventListener('touchend', () => {
+  AppState.touching = false;
+  // Slowly return bend to center
+  if (AppState.soundEnabled) SoundEngine.onTouchMove(0.5, 0.5);
+});
+
+// Mouse equivalents (desktop / dev)
+document.getElementById('main-canvas').addEventListener('mousedown', async e => {
+  if (!AppState.soundEnabled) await toggleSound();
+  const { x, y } = getCanvasNorm(e);
+  SoundEngine.onTouchDown(x, y);
+  AppState.mouseDown = true;
+});
+
+document.getElementById('main-canvas').addEventListener('mousemove', e => {
+  if (!AppState.soundEnabled || !AppState.mouseDown) return;
+  const { x, y } = getCanvasNorm(e);
+  SoundEngine.onTouchMove(x, y);
+});
+
+document.getElementById('main-canvas').addEventListener('mouseup', () => {
+  AppState.mouseDown = false;
+  if (AppState.soundEnabled) SoundEngine.onTouchMove(0.5, 0.5);
+});
+
+document.getElementById('main-canvas').addEventListener('mouseleave', () => {
+  AppState.mouseDown = false;
+});
+
+// Expose debug helper to browser console — useful during museum setup
+// Type: soundDebug() in DevTools console
+window.soundDebug = () => {
+  console.table(SoundEngine.debugState());
+  return SoundEngine.debugState();
+};
+
+/** Kiosk: long-press on logo area could expose controls — omitted for clarity */
+
+// ── BOOT ─────────────────────────────────────────────────────────
+(async function boot() {
+  // Size canvas
+  Renderer.resize();
+
+  // Start render loop
+  Renderer.drawFrame();
+
+  // Initial data fetch
+  await fetchAllData();
+
+  // Refresh on schedule
+  setInterval(fetchAllData, CONFIG.FETCH_INTERVAL);
+})();
+</script>
+</body>
+</html>
