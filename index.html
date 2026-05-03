@@ -653,6 +653,7 @@ body::after {
 ═════════════════════════════════════════════════════════════════════ -->
 <script>
 'use strict';
+document.addEventListener('DOMContentLoaded', () => {
 
 // ═══════════════════════════════════════════════════════════════════
 // CONFIG  — single source of truth, mirrors TD parameter table
@@ -1385,9 +1386,8 @@ const SoundEngine = (() => {
 // TD equivalent: Geometry/COMP with GLSL MAT
 // ═══════════════════════════════════════════════════════════════════
 const Renderer = (() => {
-  const canvas = document.getElementById('main-canvas');
-  const cx     = canvas.getContext('2d');
-  let   width  = 0, height = 0;
+  let canvas, cx;
+  let width  = 0, height = 0;
   let   frame  = 0;
 
   // Particle system for river current
@@ -1401,6 +1401,10 @@ const Renderer = (() => {
   let   eaglePaths     = [];
 
   function resize() {
+    if (!canvas) {
+      canvas = document.getElementById('main-canvas');
+      cx     = canvas.getContext('2d');
+    }
     const c = document.getElementById('canvas-container');
     canvas.width  = width  = c.offsetWidth;
     canvas.height = height = c.offsetHeight;
@@ -1997,6 +2001,8 @@ window.soundDebug = () => {
   // Refresh on schedule
   setInterval(fetchAllData, CONFIG.FETCH_INTERVAL);
 })();
+
+}); // end DOMContentLoaded
 </script>
 </body>
 </html>
