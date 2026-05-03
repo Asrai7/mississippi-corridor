@@ -820,34 +820,55 @@ const USGSFetcher = (() => {
 // TD equivalent: Web CHOP → Python DAT parser
 // ═══════════════════════════════════════════════════════════════════
 const eBirdFetcher = (() => {
-  /**
-   * Fetch recent Bald Eagle sightings from eBird API.
-   * Returns: { count, sightings: [{ obsDt, locName, howMany, lat, lng }] }
-   *
-   * NOTE: Requires a free eBird API key from https://ebird.org/api/keygen
-   * Replace CONFIG.EBIRD_TOKEN with your key.
-   *
-   * TD Note: In TouchDesigner, use a Web CHOP with header:
-   *          X-eBirdApiToken: YOUR_TOKEN
-   */
+
+  // eBird's API blocks direct browser requests (CORS).
+  // We route through allorigins.win which passes the request server-side
+  // and returns the response to the browser. Works from GitHub Pages.
+  // TD Note: In TouchDesigner, call the eBird URL directly — no proxy needed.
+  const PROXY = 'https://api.allorigins.win/get?url=';
+
+  // Realistic mock data for Rock Island County — used when no API key is set.
+  // Gives the UI something meaningful to display and lets the sound engine
+  // trigger the aerial shimmer on load so visitors hear it right away.
+  const MOCK_DATA = {
+    count: 4,
+    mock:  true,
+    sightings: [
+      { obsDt: '2024-11-12 08:14', locName: 'Illiniwek Forest Preserve',    howMany: 2, lat: 41.607, lng: -90.491 },
+      { obsDt: '2024-11-11 14:32', locName: 'Lock and Dam 14 — upstream',   howMany: 1, lat: 41.522, lng: -90.512 },
+      { obsDt: '2024-11-10 09:05', locName: 'Rock Island County — Slough',  howMany: 1, lat: 41.580, lng: -90.535 },
+    ],
+    note: 'Sample data — add eBird key to CONFIG for live sightings',
+  };
+
   async function fetchEagleSightings() {
+
+    // ── No API key → return mock immediately ─────────────────
     if (CONFIG.EBIRD_TOKEN === 'YOUR_EBIRD_API_TOKEN') {
-      // Return mock data when no token is configured
-      return { count: 0, sightings: [], mock: true };
+      console.log('[eBird] No API key — using mock data. Get a free key at ebird.org/api/keygen');
+      return MOCK_DATA;
     }
 
-    const url = `https://api.ebird.org/v2/data/obs/${CONFIG.EBIRD_REGION}/recent/${CONFIG.EBIRD_SPECIES}`
-              + `?back=${CONFIG.EBIRD_DAYS_BACK}&detail=simple&hotspot=false`;
+    // ── Build eBird URL, then wrap in CORS proxy ──────────────
+    const eBirdUrl = encodeURIComponent(
+      `https://api.ebird.org/v2/data/obs/${CONFIG.EBIRD_REGION}/recent/${CONFIG.EBIRD_SPECIES}`
+      + `?back=${CONFIG.EBIRD_DAYS_BACK}&detail=simple&hotspot=false`
+      + `&key=${CONFIG.EBIRD_TOKEN}`   // allorigins passes query params through
+    );
 
     try {
-      const response = await fetch(url, {
-        headers: { 'X-eBirdApiToken': CONFIG.EBIRD_TOKEN }
-      });
-      if (!response.ok) throw new Error(`eBird HTTP ${response.status}`);
-      const data = await response.json();
+      const response = await fetch(`${PROXY}${eBirdUrl}`);
+      if (!response.ok) throw new Error(`Proxy HTTP ${response.status}`);
+
+      const wrapper = await response.json();
+      // allorigins wraps the actual response in { contents: "...", status: {...} }
+      const data = JSON.parse(wrapper.contents);
+
+      if (!Array.isArray(data)) throw new Error('Unexpected eBird response shape');
 
       return {
         count:     data.length,
+        mock:      false,
         sightings: data.map(s => ({
           obsDt:   s.obsDt,
           locName: s.locName,
@@ -856,14 +877,16 @@ const eBirdFetcher = (() => {
           lng:     s.lng,
         })),
       };
+
     } catch (err) {
-      console.warn('[eBird] Fetch failed:', err.message);
-      return { count: 0, sightings: [], error: err.message };
+      console.warn('[eBird] Live fetch failed — falling back to mock:', err.message);
+      return { ...MOCK_DATA, error: err.message };
     }
   }
 
   return { fetchEagleSightings };
 })();
+
 
 
 // ═══════════════════════════════════════════════════════════════════
@@ -1032,7 +1055,7 @@ const SoundEngine = (() => {
     Tone.Transport.bpm.value = 72;
 
     // ── Master chain: Chorus → Reverb → Volume ────────────────
-    masterVol  = new Tone.Volume(-10).toDestination();
+    masterVol  = new Tone.Volume(-6).toDestination();
 
     reverbBus  = new Tone.Reverb({ decay: 7, preDelay: 0.04, wet: 0.52 });
     await reverbBus.ready;
@@ -1116,12 +1139,10 @@ const SoundEngine = (() => {
 
     // ── BLOOM SYNTH (touch-down events) ──────────────────────
     // Bright pentatonic arpeggio rippling upward — the "reward" moment.
-    // TD: Sequencer CHOP (8 steps) triggered by a CHOP Execute DAT
-    //     on touch-down event, pitch row set from current stage freq.
     bloomSynth = new Tone.PolySynth(Tone.Synth, {
-      oscillator: { type: 'triangle8' },  // triangle with 8 harmonics
+      oscillator: { type: 'triangle8' },
       envelope:   { attack: 0.01, decay: 0.28, sustain: 0.05, release: 1.4 },
-      volume:     -22,
+      volume:     -12,
     }).connect(reverbBus);
 
     // ── WETLAND NOISE / FILTER ────────────────────────────────
@@ -1757,6 +1778,7 @@ const AppState = {
   fetchInProgress:    false,
   touching:           false,
   mouseDown:          false,
+  eaglesLoaded:       false,
 };
 
 
@@ -1799,13 +1821,25 @@ function updateUI(data, eagleData) {
 
   // Eagles
   if (eagleData) {
-    const el = document.getElementById('val-eagles');
-    const count = eagleData.mock ? '—' : eagleData.count;
-    el.textContent = count;
-    el.className   = 'node-value aerial' + (eagleData.mock ? ' loading' : '');
-    document.getElementById('sub-eagles').textContent = eagleData.mock
-      ? 'Add eBird API key to CONFIG'
-      : `${eagleData.count} obs · last ${CONFIG.EBIRD_DAYS_BACK} days`;
+    const el    = document.getElementById('val-eagles');
+    const subEl = document.getElementById('sub-eagles');
+    el.textContent = eagleData.count;
+    el.className   = 'node-value aerial';
+
+    if (eagleData.mock) {
+      // Show mock data meaningfully — sample sightings, prompt for real key
+      const recent = eagleData.sightings?.[0];
+      subEl.textContent = recent
+        ? `Sample · last seen: ${recent.locName.split('—')[0].trim()}`
+        : 'Sample data — add eBird key for live sightings';
+    } else if (eagleData.error) {
+      subEl.textContent = 'eBird unavailable — showing sample data';
+    } else {
+      const recent = eagleData.sightings?.[0];
+      subEl.textContent = recent
+        ? `Last: ${recent.locName.substring(0,32)} · ${recent.obsDt.split(' ')[0]}`
+        : `${eagleData.count} obs · last ${CONFIG.EBIRD_DAYS_BACK} days`;
+    }
   }
 }
 
@@ -1859,11 +1893,15 @@ async function fetchAllData() {
       const eagleResult = eagleData.status === 'fulfilled' ? eagleData.value : null;
       updateUI(d, eagleResult);
 
-      // Eagle events
-      if (eagleResult && eagleResult.count > AppState.rawEagles) {
-        SoundEngine.triggerAerialSighting(eagleResult.count);
-        Renderer.triggerEagleEvent();
+      // Eagle events — trigger shimmer if count > 0 on first load, or increases
+      const firstLoad = AppState.rawEagles === 0 && !AppState.eaglesLoaded;
+      if (eagleResult && (firstLoad || eagleResult.count > AppState.rawEagles)) {
+        if (eagleResult.count > 0) {
+          SoundEngine.triggerAerialSighting(eagleResult.count);
+          Renderer.triggerEagleEvent();
+        }
       }
+      AppState.eaglesLoaded = true;
       if (eagleResult) AppState.rawEagles = eagleResult.count || 0;
 
       // Status: live
