@@ -703,41 +703,56 @@ const USGSFetcher = (() => {
    *          pointed at the same URL. The JSON path to the value is:
    *          value.timeSeries[n].values[0].value[0].value
    */
-  async function fetchInstantaneous() {
+
+  // Build the USGS query URL — no custom headers, plain GET only
+  function buildUSGSUrl() {
     const url = new URL(CONFIG.USGS_BASE_URL);
     url.searchParams.set('sites',       CONFIG.USGS_SITE);
     url.searchParams.set('parameterCd', CONFIG.USGS_PARAMS);
-    url.searchParams.set('period',      CONFIG.USGS_PERIOD);  // 3h for history
+    url.searchParams.set('period',      CONFIG.USGS_PERIOD);
     url.searchParams.set('format',      'json');
     url.searchParams.set('siteStatus',  'active');
+    return url.toString();
+  }
 
-    // Signal fetch in progress
+  async function fetchInstantaneous() {
     setStatus('fetch', 'Fetching USGS data…');
 
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 12000); // 12s timeout
+    const directUrl = buildUSGSUrl();
+    // Proxy URL — used as fallback if direct call fails
+    const proxyUrl  = `https://api.allorigins.win/get?url=${encodeURIComponent(directUrl)}`;
+
+    // Try direct first (works when USGS CORS is permissive),
+    // then fall back to proxy (always works from GitHub Pages)
+    let json = null;
 
     try {
-      const response = await fetch(url.toString(), {
-        signal: controller.signal,
-        headers: { 'Accept': 'application/json' }
-      });
+      const controller = new AbortController();
+      const timeout    = setTimeout(() => controller.abort(), 10000);
+      // No custom headers — bare GET request avoids CORS preflight entirely
+      const res = await fetch(directUrl, { signal: controller.signal });
       clearTimeout(timeout);
-
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status} — ${response.statusText}`);
+      if (!res.ok) throw new Error(`Direct HTTP ${res.status}`);
+      json = await res.json();
+      console.log('[USGS] Direct fetch succeeded');
+    } catch (directErr) {
+      console.warn('[USGS] Direct fetch failed, trying proxy:', directErr.message);
+      try {
+        const controller = new AbortController();
+        const timeout    = setTimeout(() => controller.abort(), 12000);
+        const res = await fetch(proxyUrl, { signal: controller.signal });
+        clearTimeout(timeout);
+        if (!res.ok) throw new Error(`Proxy HTTP ${res.status}`);
+        const wrapper = await res.json();
+        // allorigins wraps response in { contents: "...", status: {...} }
+        json = JSON.parse(wrapper.contents);
+        console.log('[USGS] Proxy fetch succeeded');
+      } catch (proxyErr) {
+        throw new Error(`USGS unavailable — direct: ${directErr.message} · proxy: ${proxyErr.message}`);
       }
-
-      const json = await response.json();
-      return parseUSGSResponse(json);
-
-    } catch (err) {
-      clearTimeout(timeout);
-      if (err.name === 'AbortError') {
-        throw new Error('USGS API timeout (12s)');
-      }
-      throw err;
     }
+
+    return parseUSGSResponse(json);
   }
 
   /**
@@ -1533,16 +1548,15 @@ const Renderer = (() => {
     frame++;
     if (!bgBitmap) return;
 
-    // Background
+    // Lerp mode color every frame — smooth palette transition
+    lerpModeColor();
+
     cx.drawImage(bgBitmap, 0, 0);
 
-    // Mode-specific visuals
     const mode = AppState.activeMode;
 
-    // ── River current (always on) ──────────────────────────────
     drawRiverCurrent();
 
-    // ── Wetland botanical growth ───────────────────────────────
     if (mode === 'wetland') {
       if (frame % 8 === 0 && stems.length < 18) {
         spawnStem(width * 0.1 + Math.random() * width * 0.8);
@@ -1550,65 +1564,87 @@ const Renderer = (() => {
       drawStems();
     }
 
-    // ── Aerial paths ───────────────────────────────────────────
-    if (mode === 'aerial') {
-      drawEaglePaths();
-    }
+    if (mode === 'aerial') drawEaglePaths();
+
+    // Ripples and wake always on top
+    drawWake();
+    drawRipples();
 
     requestAnimationFrame(drawFrame);
   }
 
   function drawRiverCurrent() {
-    const glow     = DataMapper.stageToGlow(AppState.rawStage || 12);
-    const speedMul = DataMapper.dischargeToSpeed(AppState.rawDischarge || 50000);
-    const breath   = Math.sin(frame * 0.008) * 0.5 + 0.5;
+    const glow      = DataMapper.stageToGlow(AppState.rawStage || 12);
+    const speedMul  = DataMapper.dischargeToSpeed(AppState.rawDischarge || 50000);
+    const breath    = Math.sin(frame * 0.008) * 0.5 + 0.5;
+    // Discharge flood intensity — 0 at low water, 1 at flood
+    const floodNorm = DataMapper.normalize(
+      AppState.rawDischarge || 50000,
+      CONFIG.DISCHARGE_MIN, CONFIG.DISCHARGE_MAX
+    );
 
     cx.save();
     cx.globalCompositeOperation = 'screen';
 
     for (const p of particles) {
-      // Update
       p.wander += 0.018;
-      p.vx      = (0.5 + glow * 2.5) * speedMul + Math.cos(p.wander) * 0.12;
-      p.vy     += (Math.random() - 0.5) * 0.04;
-      p.vy     *= 0.98;
-      p.x      += p.vx;
-      p.y      += p.vy;
+      // At flood: particles surge, spread vertically, and swarm
+      const floodSpread = 1 + floodNorm * 2.2;
+      p.vx  = (0.5 + glow * 2.5) * speedMul + Math.cos(p.wander) * 0.12;
+      p.vy += (Math.random() - 0.5) * 0.04 * floodSpread;
+      p.vy *= 0.98;
+      p.x  += p.vx;
+      p.y  += p.vy;
 
-      if (p.x > width + 10) {
-        Object.assign(p, newParticle(false));
-      }
+      if (p.x > width + 10) Object.assign(p, newParticle(false));
 
-      // Draw
       const a = p.alpha * (0.4 + glow * 0.6) * (0.7 + breath * 0.3) * p.life;
       if (a < 0.01) continue;
 
-      cx.globalAlpha = a;
-      cx.fillStyle   = `hsl(${p.hue}, 90%, ${40 + glow * 35}%)`;
+      // Color: lerps toward mode palette color at high discharge
+      const baseHue  = 185 + floodNorm * 20;   // shifts cyan→teal at flood
+      const baseLit  = 40 + glow * 35;
+      cx.globalAlpha = a * (0.7 + floodNorm * 0.3);
+      cx.fillStyle   = `hsl(${baseHue}, 90%, ${baseLit}%)`;
       cx.beginPath();
-      cx.arc(p.x, p.y, p.size * (0.6 + glow * 0.8), 0, Math.PI * 2);
+      cx.arc(p.x, p.y, p.size * (0.6 + glow * 0.8 + floodNorm * 0.5), 0, Math.PI * 2);
       cx.fill();
 
-      // Glow halo
-      if (glow > 0.4 && Math.random() > 0.7) {
-        cx.globalAlpha = a * 0.08;
+      // Flood-state: large glow halos appear more frequently
+      const haloThresh = 0.7 - floodNorm * 0.45;
+      if (glow > 0.3 && Math.random() > haloThresh) {
+        cx.globalAlpha = a * (0.05 + floodNorm * 0.08);
         cx.beginPath();
-        cx.arc(p.x, p.y, p.size * 10, 0, Math.PI * 2);
+        cx.arc(p.x, p.y, p.size * (10 + floodNorm * 8), 0, Math.PI * 2);
         cx.fill();
       }
     }
 
     cx.restore();
 
-    // Horizontal glow band — bioluminescent "river skin"
+    // Bioluminescent river band — brightens and widens at flood
     cx.save();
-    const riverY  = height * 0.55;
-    const band    = cx.createLinearGradient(0, riverY - 40, 0, riverY + 40);
-    band.addColorStop(0,   'rgba(0,212,232,0)');
-    band.addColorStop(0.5, `rgba(0,212,232,${(0.015 + glow * 0.04) * (0.6 + breath * 0.4)})`);
-    band.addColorStop(1,   'rgba(0,212,232,0)');
+    const riverY   = height * 0.55;
+    const bandH    = 40 + floodNorm * 60;    // wider band at high discharge
+    const bandAlpha = (0.015 + glow * 0.04 + floodNorm * 0.055) * (0.6 + breath * 0.4);
+    const band = cx.createLinearGradient(0, riverY - bandH, 0, riverY + bandH);
+    band.addColorStop(0,   modeColor(0));
+    band.addColorStop(0.5, modeColor(bandAlpha));
+    band.addColorStop(1,   modeColor(0));
     cx.fillStyle = band;
-    cx.fillRect(0, riverY - 40, width, 80);
+    cx.fillRect(0, riverY - bandH, width, bandH * 2);
+
+    // At high discharge: add a second urgent surge line
+    if (floodNorm > 0.55) {
+      const surgeY = riverY + Math.sin(frame * 0.04) * 18;
+      const surge  = cx.createLinearGradient(0, surgeY - 6, 0, surgeY + 6);
+      surge.addColorStop(0,   modeColor(0));
+      surge.addColorStop(0.5, modeColor((floodNorm - 0.55) * 0.18));
+      surge.addColorStop(1,   modeColor(0));
+      cx.fillStyle = surge;
+      cx.fillRect(0, surgeY - 6, width, 12);
+    }
+
     cx.restore();
   }
 
@@ -1717,48 +1753,154 @@ const Renderer = (() => {
     spawnEaglePath();
   }
 
+  // ── TOUCH RIPPLES ────────────────────────────────────────────
+  // Each touch-down spawns a ripple that expands and fades.
+  // Color keys to active mode: cyan=river, jade=wetland, gold=aerial.
+  const ripples = [];
+
+  function spawnRipple(x, y) {
+    const modeColors = { river: '0,212,232', wetland: '42,223,138', aerial: '240,192,64' };
+    ripples.push({
+      x, y,
+      r:     0,
+      maxR:  80 + Math.random() * 60,
+      life:  1,
+      decay: 0.022 + Math.random() * 0.01,
+      color: modeColors[AppState.activeMode] || '0,212,232',
+      // second inner ring, slightly delayed
+      r2:    0,
+      life2: 0,
+    });
+  }
+
+  function drawRipples() {
+    cx.save();
+    cx.globalCompositeOperation = 'screen';
+    for (let i = ripples.length - 1; i >= 0; i--) {
+      const rp = ripples[i];
+      rp.r    += (rp.maxR - rp.r) * 0.09;   // ease outward
+      rp.life -= rp.decay;
+
+      if (rp.life <= 0) { ripples.splice(i, 1); continue; }
+
+      // Outer ring
+      cx.globalAlpha = rp.life * 0.55;
+      cx.strokeStyle = `rgba(${rp.color},1)`;
+      cx.lineWidth   = 1.5 * rp.life;
+      cx.beginPath();
+      cx.arc(rp.x, rp.y, rp.r, 0, Math.PI * 2);
+      cx.stroke();
+
+      // Inner fill pulse — only while still young
+      if (rp.life > 0.6) {
+        cx.globalAlpha = (rp.life - 0.6) * 0.18;
+        cx.fillStyle   = `rgba(${rp.color},1)`;
+        cx.beginPath();
+        cx.arc(rp.x, rp.y, rp.r * 0.45, 0, Math.PI * 2);
+        cx.fill();
+      }
+
+      // Second ring — launches when outer is 35% grown
+      if (rp.r > rp.maxR * 0.35 && rp.life2 === 0) rp.life2 = 0.01;
+      if (rp.life2 > 0) {
+        rp.r2    += (rp.maxR * 1.4 - rp.r2) * 0.07;
+        rp.life2  = rp.life * 0.7;
+        cx.globalAlpha = rp.life2 * 0.28;
+        cx.strokeStyle = `rgba(${rp.color},1)`;
+        cx.lineWidth   = 0.8;
+        cx.beginPath();
+        cx.arc(rp.x, rp.y, rp.r2, 0, Math.PI * 2);
+        cx.stroke();
+      }
+    }
+    cx.restore();
+  }
+
+  // ── WAKE TRAIL ───────────────────────────────────────────────
+  // Stores recent pointer positions; drawn as a fading bioluminescent smear.
+  const wakePoints = [];
+  const WAKE_MAX   = 55;
+
+  function addWakePoint(x, y) {
+    wakePoints.push({ x, y, t: performance.now() });
+    if (wakePoints.length > WAKE_MAX) wakePoints.shift();
+  }
+
+  function drawWake() {
+    if (wakePoints.length < 2) return;
+    const now = performance.now();
+    const modeColors = { river: '0,212,232', wetland: '42,223,138', aerial: '240,192,64' };
+    const col = modeColors[AppState.activeMode] || '0,212,232';
+
+    cx.save();
+    cx.globalCompositeOperation = 'screen';
+    cx.lineCap  = 'round';
+    cx.lineJoin = 'round';
+
+    for (let i = 1; i < wakePoints.length; i++) {
+      const p  = wakePoints[i];
+      const pp = wakePoints[i - 1];
+      const tProgress = i / wakePoints.length;
+      const age       = Math.min((now - p.t) / 900, 1); // fade over 900ms
+      const a         = tProgress * tProgress * (1 - age) * 0.45;
+      if (a < 0.005) continue;
+
+      cx.globalAlpha = a;
+      cx.strokeStyle = `rgba(${col},1)`;
+      cx.lineWidth   = 4 * tProgress * (1 - age * 0.6);
+      cx.beginPath();
+      cx.moveTo(pp.x, pp.y);
+      cx.lineTo(p.x, p.y);
+      cx.stroke();
+    }
+
+    // Dissolve old points when not interacting
+    if (!AppState.touching && !AppState.mouseDown) {
+      const cutoff = now - 1200;
+      while (wakePoints.length && wakePoints[0].t < cutoff) wakePoints.shift();
+    }
+
+    cx.restore();
+  }
+
+  // Public methods for touch events
+  function onPointerMove(x, y) { addWakePoint(x, y); }
+  function onPointerDown(x, y) { spawnRipple(x, y); addWakePoint(x, y); }
+
+  // ── MODE TRANSITION ──────────────────────────────────────────
+  // Smooth canvas color palette crossfade between modes.
+  // We store a "mode blend" value (0=river,1=wetland,2=aerial mapped to color)
+  // and lerp toward it each frame — no hard cuts.
+  const modeTarget  = { r: 0, g: 212, b: 232 };   // cyan — river default
+  const modeCurrent = { r: 0, g: 212, b: 232 };
+  const MODE_PALETTE = {
+    river:   { r: 0,   g: 212, b: 232 },  // cyan
+    wetland: { r: 42,  g: 223, b: 138 },  // jade
+    aerial:  { r: 240, g: 192, b: 64  },  // gold
+  };
+
+  function setModeTarget(mode) {
+    const p = MODE_PALETTE[mode] || MODE_PALETTE.river;
+    modeTarget.r = p.r; modeTarget.g = p.g; modeTarget.b = p.b;
+  }
+
+  function lerpModeColor() {
+    const spd = 0.025; // ~40 frames to cross — ~0.65s at 60fps
+    modeCurrent.r += (modeTarget.r - modeCurrent.r) * spd;
+    modeCurrent.g += (modeTarget.g - modeCurrent.g) * spd;
+    modeCurrent.b += (modeTarget.b - modeCurrent.b) * spd;
+  }
+
+  // Returns current interpolated color as rgba string
+  function modeColor(alpha) {
+    const { r, g, b } = modeCurrent;
+    return `rgba(${r|0},${g|0},${b|0},${alpha})`;
+  }
+
   window.addEventListener('resize', resize);
 
-  return { resize, drawFrame, triggerEagleEvent };
+  return { resize, drawFrame, triggerEagleEvent, onPointerMove, onPointerDown, setModeTarget };
 })();
-
-
-// ═══════════════════════════════════════════════════════════════════
-// MODULE 6: SparklineRenderer  (SVG sparklines)
-// TD equivalent: SOP render to texture
-// ═══════════════════════════════════════════════════════════════════
-function renderSparkline(svgId, values, colorVar) {
-  const svg = document.getElementById(svgId);
-  if (!svg || !values || values.length < 2) return;
-
-  const W = 240, H = 28;
-  const min = Math.min(...values);
-  const max = Math.max(...values);
-  const range = max - min || 1;
-
-  const pts = values.map((v, i) => {
-    const x = (i / (values.length - 1)) * W;
-    const y = H - ((v - min) / range) * (H - 4) - 2;
-    return `${x.toFixed(1)},${y.toFixed(1)}`;
-  }).join(' ');
-
-  const color = getComputedStyle(document.documentElement)
-    .getPropertyValue(colorVar).trim() || '#00d4e8';
-
-  svg.innerHTML = `
-    <polyline points="${pts}"
-      fill="none"
-      stroke="${color}"
-      stroke-width="1.2"
-      stroke-linecap="round"
-      stroke-linejoin="round"
-      opacity="0.55"/>
-    <polyline points="0,${H} ${pts} ${W},${H}"
-      fill="${color}"
-      opacity="0.07"
-      stroke="none"/>
-  `;
-}
 
 
 // ═══════════════════════════════════════════════════════════════════
@@ -1786,48 +1928,120 @@ const AppState = {
 // MODULE 8: AppController  — orchestrates all modules
 // ═══════════════════════════════════════════════════════════════════
 
-/** Update the sidebar UI with fresh data */
+// ── ANIMATED NUMBER COUNTER ──────────────────────────────────────
+// Smoothly counts from current displayed value to target over ~800ms.
+// TD equivalent: Lag CHOP on a display channel.
+function animateValue(elId, fromVal, toVal, decimals, duration = 820) {
+  const el = document.getElementById(elId);
+  if (!el) return;
+  const start  = performance.now();
+  const from   = parseFloat(fromVal) || 0;
+  const diff   = toVal - from;
+  function step(now) {
+    const t = Math.min((now - start) / duration, 1);
+    // Ease out cubic
+    const ease = 1 - Math.pow(1 - t, 3);
+    el.textContent = (from + diff * ease).toFixed(decimals);
+    if (t < 1) requestAnimationFrame(step);
+    else el.textContent = toVal.toFixed(decimals);
+  }
+  requestAnimationFrame(step);
+}
+
+// ── ANIMATED SPARKLINE DRAW ──────────────────────────────────────
+// Sparkline strokes itself on from left to right over 600ms.
+function renderSparklineAnimated(svgId, values, color) {
+  const svg = document.getElementById(svgId);
+  if (!svg || !values || values.length < 2) return;
+
+  const W = 240, H = 28;
+  const min   = Math.min(...values);
+  const max   = Math.max(...values);
+  const range = max - min || 1;
+
+  const allPts = values.map((v, i) => ({
+    x: (i / (values.length - 1)) * W,
+    y: H - ((v - min) / range) * (H - 4) - 2,
+  }));
+
+  // Build full polyline string for fill area (stays static)
+  const fillPts = [`0,${H}`, ...allPts.map(p => `${p.x.toFixed(1)},${p.y.toFixed(1)}`), `${W},${H}`].join(' ');
+
+  svg.innerHTML = `
+    <polyline id="${svgId}-line" points=""
+      fill="none" stroke="${color}" stroke-width="1.3"
+      stroke-linecap="round" stroke-linejoin="round" opacity="0.6"/>
+    <polyline points="${fillPts}"
+      fill="${color}" opacity="0.06" stroke="none"/>
+  `;
+
+  // Animate the line drawing left→right over 600ms
+  const lineEl = svg.querySelector(`#${svgId}-line`);
+  const start  = performance.now();
+  function step(now) {
+    const t    = Math.min((now - start) / 600, 1);
+    const ease = 1 - Math.pow(1 - t, 2);
+    const count = Math.max(2, Math.round(ease * allPts.length));
+    const pts   = allPts.slice(0, count).map(p => `${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(' ');
+    if (lineEl) lineEl.setAttribute('points', pts);
+    if (t < 1) requestAnimationFrame(step);
+  }
+  requestAnimationFrame(step);
+}
+
+/** Update the sidebar UI with fresh data — animated */
 function updateUI(data, eagleData) {
-  // Stage
+
+  // Stage — count up with animation
   if (data.stage !== null) {
-    const el = document.getElementById('val-stage');
-    el.textContent = data.stage.toFixed(2);
-    el.className   = 'node-value river';
+    const el      = document.getElementById('val-stage');
+    const prevVal = parseFloat(el.textContent) || data.stage;
+    el.className  = 'node-value river';
     document.getElementById('unit-stage').style.display = '';
+    animateValue('val-stage', prevVal, data.stage, 2);
     document.getElementById('sub-stage').textContent =
-      `${new Date(data.timestamp).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'})} · USGS 05451500`
-      + (data.stageSuspect ? ' ⚠ suspect' : '');
-    renderSparkline('spark-stage', data.history.stage, '--river-cyan');
+      `${new Date(data.timestamp).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})} · USGS 05451500`
+      + (data.stageSuspect ? ' ⚠' : '');
+    renderSparklineAnimated('spark-stage', data.history.stage, '#00d4e8');
   }
 
-  // Discharge
+  // Discharge — count up, no decimals
   if (data.discharge !== null) {
-    const el = document.getElementById('val-discharge');
-    el.textContent = data.discharge.toLocaleString('en-US', { maximumFractionDigits: 0 });
-    el.className   = 'node-value river';
+    const el      = document.getElementById('val-discharge');
+    const prevVal = parseFloat(el.textContent?.replace(/,/g,'')) || data.discharge;
+    el.className  = 'node-value river';
     document.getElementById('unit-discharge').style.display = '';
-    renderSparkline('spark-discharge', data.history.discharge, '--river-deep');
+    // Custom integer animator for discharge (large numbers)
+    const start = performance.now();
+    const from  = prevVal, to = data.discharge, dur = 900;
+    ;(function step(now) {
+      const t    = Math.min((now - start) / dur, 1);
+      const ease = 1 - Math.pow(1 - t, 3);
+      el.textContent = Math.round(from + (to - from) * ease).toLocaleString('en-US');
+      if (t < 1) requestAnimationFrame(step);
+    })(start);
+    renderSparklineAnimated('spark-discharge', data.history.discharge, '#006880');
   }
 
   // Temperature
   if (data.temperature !== null) {
-    const el = document.getElementById('val-temp');
-    el.textContent = data.temperature.toFixed(1);
-    el.className   = 'node-value wetland';
+    const el      = document.getElementById('val-temp');
+    const prevVal = parseFloat(el.textContent) || data.temperature;
+    el.className  = 'node-value wetland';
     document.getElementById('unit-temp').style.display = '';
+    animateValue('val-temp', prevVal, data.temperature, 1);
     document.getElementById('sub-temp').textContent =
-      `Water temp · ${data.temperature < 10 ? 'Cold water' : data.temperature < 18 ? 'Cool' : 'Warm'} state`;
+      `Water temp · ${data.temperature < 10 ? 'Cold' : data.temperature < 18 ? 'Cool' : 'Warm'}`;
   }
 
   // Eagles
   if (eagleData) {
     const el    = document.getElementById('val-eagles');
     const subEl = document.getElementById('sub-eagles');
-    el.textContent = eagleData.count;
-    el.className   = 'node-value aerial';
-
+    const prev  = parseInt(el.textContent) || 0;
+    el.className = 'node-value aerial';
+    animateValue('val-eagles', prev, eagleData.count, 0, 600);
     if (eagleData.mock) {
-      // Show mock data meaningfully — sample sightings, prompt for real key
       const recent = eagleData.sightings?.[0];
       subEl.textContent = recent
         ? `Sample · last seen: ${recent.locName.split('—')[0].trim()}`
@@ -1911,9 +2125,8 @@ async function fetchAllData() {
 
     } else {
       const err = usgsData.reason?.message || 'Unknown error';
-      setStatus('error', `Error · ${err}`);
-      showError(`USGS fetch failed: ${err}\n\nCheck network connection. CORS proxy may be required in local dev.`);
-      // Mark indicator dots as error
+      setStatus('error', `USGS unavailable`);
+      showError(`Could not reach USGS data: ${err}`);
       document.querySelectorAll('.node-dot').forEach(d => d.classList.add('err'));
     }
 
@@ -1922,18 +2135,41 @@ async function fetchAllData() {
   }
 }
 
-/** Mode switcher — updates UI, sound routing, visuals */
+/** Mode switcher — canvas color crossfade + sound routing */
 function setMode(mode) {
   AppState.activeMode = mode;
 
   // Update mode buttons
   document.querySelectorAll('.mode-btn').forEach(btn => {
     btn.classList.toggle('active', btn.dataset.mode === mode);
+    // Remove all mode-specific active classes then re-add correct one
+    btn.classList.remove('active');
+    if (btn.dataset.mode === mode) btn.classList.add('active');
   });
 
-  // Update sound routing
-  SoundEngine.setMode(mode);
+  // Trigger canvas palette crossfade
+  Renderer.setModeTarget(mode);
 
+  // Flash the canvas container border in the new mode color
+  const modeColors = { river: '#00d4e8', wetland: '#2adf8a', aerial: '#f0c040' };
+  const container  = document.getElementById('canvas-container');
+  const color      = modeColors[mode] || '#00d4e8';
+  container.style.transition  = 'box-shadow 0.15s ease';
+  container.style.boxShadow   = `inset 0 0 0 1.5px ${color}`;
+  setTimeout(() => {
+    container.style.boxShadow = 'none';
+    container.style.transition = 'box-shadow 1.2s ease';
+  }, 300);
+
+  // Update sidebar accent — node dots flash to new mode color
+  const dotMap = { river: 'river', wetland: 'wetland', aerial: 'aerial' };
+  document.querySelectorAll('.node-dot').forEach(d => {
+    d.style.transition = 'transform 0.3s ease';
+    d.style.transform  = 'scale(1.8)';
+    setTimeout(() => d.style.transform = 'scale(1)', 300);
+  });
+
+  SoundEngine.setMode(mode);
   console.log(`[App] Mode → ${mode}`);
 }
 
@@ -1972,39 +2208,52 @@ function getCanvasNorm(e) {
   };
 }
 
-// Touch start → activate sound on first touch + fire bloom
+// Touch start → activate sound + fire ripple + bloom
 document.getElementById('main-canvas').addEventListener('touchstart', async e => {
   if (!AppState.soundEnabled) await toggleSound();
   const { x, y } = getCanvasNorm(e);
+  const rect = document.getElementById('main-canvas').getBoundingClientRect();
+  const absX = e.touches[0].clientX - rect.left;
+  const absY = e.touches[0].clientY - rect.top;
   SoundEngine.onTouchDown(x, y);
+  Renderer.onPointerDown(absX, absY);
   AppState.touching = true;
 }, { passive: true });
 
-// Touch move → continuous pitch bend + brightness
+// Touch move → pitch bend + wake trail
 document.getElementById('main-canvas').addEventListener('touchmove', e => {
-  if (!AppState.soundEnabled) return;
-  const { x, y } = getCanvasNorm(e);
-  SoundEngine.onTouchMove(x, y);
+  const rect = document.getElementById('main-canvas').getBoundingClientRect();
+  const absX = e.touches[0].clientX - rect.left;
+  const absY = e.touches[0].clientY - rect.top;
+  if (AppState.soundEnabled) {
+    const { x, y } = getCanvasNorm(e);
+    SoundEngine.onTouchMove(x, y);
+  }
+  Renderer.onPointerMove(absX, absY);
 }, { passive: true });
 
 document.getElementById('main-canvas').addEventListener('touchend', () => {
   AppState.touching = false;
-  // Slowly return bend to center
   if (AppState.soundEnabled) SoundEngine.onTouchMove(0.5, 0.5);
 });
 
-// Mouse equivalents (desktop / dev)
+// Mouse equivalents
 document.getElementById('main-canvas').addEventListener('mousedown', async e => {
   if (!AppState.soundEnabled) await toggleSound();
   const { x, y } = getCanvasNorm(e);
+  const rect = document.getElementById('main-canvas').getBoundingClientRect();
   SoundEngine.onTouchDown(x, y);
+  Renderer.onPointerDown(e.clientX - rect.left, e.clientY - rect.top);
   AppState.mouseDown = true;
 });
 
 document.getElementById('main-canvas').addEventListener('mousemove', e => {
-  if (!AppState.soundEnabled || !AppState.mouseDown) return;
-  const { x, y } = getCanvasNorm(e);
-  SoundEngine.onTouchMove(x, y);
+  const rect = document.getElementById('main-canvas').getBoundingClientRect();
+  Renderer.onPointerMove(e.clientX - rect.left, e.clientY - rect.top);
+  if (AppState.soundEnabled && AppState.mouseDown) {
+    const { x, y } = getCanvasNorm(e);
+    SoundEngine.onTouchMove(x, y);
+  }
 });
 
 document.getElementById('main-canvas').addEventListener('mouseup', () => {
